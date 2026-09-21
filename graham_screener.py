@@ -113,6 +113,9 @@ class ScreenResult:
     book_value_per_share: Optional[float] = None
     graham_number: Optional[float] = None       # אומדן שווי: שורש(22.5 * רווח למניה * הון למניה)
     margin_of_safety: Optional[float] = None    # הפער באחוזים בין המחיר לאומדן השווי
+    checks_ent: dict = field(default_factory=dict)   # קריטריוני המשקיע היוזם (פרק 15)
+    score_ent: int = 0
+    max_score_ent: int = 0
 
     def as_row(self) -> dict:
         row = {
@@ -140,7 +143,10 @@ class ScreenResult:
             "graham_number": self.graham_number,
             "margin_of_safety": self.margin_of_safety,
         }
+        row["score_ent"] = self.score_ent
+        row["max_score_ent"] = self.max_score_ent
         row.update({f"crit_{k}": v for k, v in self.checks.items()})
+        row.update({f"ent_{k}": v for k, v in self.checks_ent.items()})
         row.update({f"f_{k}": v for k, v in self.fscore_checks.items()})
         return row
 
@@ -151,25 +157,85 @@ SP500_CSV_URL = (
 )
 
 
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/125.0 Safari/537.36")
+
+WIKI_LISTS = {
+    "sp400": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
+    "sp600": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
+    "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+}
+
+
+def _clean_symbols(series) -> list:
+    """מנרמל טיקרים לפורמט שמקור הנתונים מבין (BRK.B הופך ל-BRK-B)."""
+    out = []
+    for s in series.astype(str):
+        s = s.strip().upper().replace(".", "-")
+        if s and s != "NAN" and len(s) <= 8:
+            out.append(s)
+    return out
+
+
+def _wikipedia_symbols(url: str) -> list:
+    """מושך טבלת מרכיבים מוויקיפדיה. חובה להזדהות כדפדפן, אחרת מתקבל 403."""
+    import io
+    import requests
+
+    resp = requests.get(url, headers={"User-Agent": BROWSER_UA}, timeout=30)
+    resp.raise_for_status()
+    for table in pd.read_html(io.StringIO(resp.text)):
+        for col in ("Symbol", "Ticker symbol", "Ticker"):
+            if col in table.columns:
+                syms = _clean_symbols(table[col])
+                if len(syms) > 50:
+                    return syms
+    raise ValueError("לא נמצאה טבלת מרכיבים בדף")
+
+
 def get_sp500_tickers() -> list:
     """מושך את רשימת מרכיבי ה-S&P 500. מנסה קודם CSV יציב מגיטהאב, אחר כך ויקיפדיה."""
     try:
         df = pd.read_csv(SP500_CSV_URL)
-        tickers = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
-        print(f"[info] נמשכו {len(tickers)} טיקרים מרשימת ה-S&P 500 (מקור: datasets/s-and-p-500-companies).")
+        tickers = _clean_symbols(df["Symbol"])
+        print(f"[info] נמשכו {len(tickers)} טיקרים מה-S&P 500 (מקור: datasets/s-and-p-500-companies).")
         return tickers
     except Exception as e:
         print(f"[warn] נכשלה משיכה מגיטהאב ({e}). מנסה ויקיפדיה...")
 
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0]
-        tickers = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
-        print(f"[info] נמשכו {len(tickers)} טיקרים מוויקיפדיה.")
+        tickers = _wikipedia_symbols(WIKI_LISTS["sp500"])
+        print(f"[info] נמשכו {len(tickers)} טיקרים מה-S&P 500 (ויקיפדיה).")
         return tickers
     except Exception as e:
         print(f"[warn] נכשלה משיכת רשימת S&P 500 ({e}). משתמש ברשימת גיבוי מצומצמת.")
         return FALLBACK_LARGE_CAPS
+
+
+def get_sp1500_tickers() -> list:
+    """
+    רשימת ה-S&P Composite 1500: 500 הגדולות, 400 הבינוניות ו-600 הקטנות.
+
+    שני המדדים הנוספים דורשים רווחיות לצורך הכללה, ולכן הם מסננים מראש חלק
+    ניכר מהחברות הבעייתיות - בשונה ממדדים רחבים כמו ראסל 2000. אם אחת
+    הרשימות אינה זמינה, הסריקה ממשיכה עם מה שכן נמשך.
+    """
+    tickers = list(get_sp500_tickers())
+    for key, label in (("sp400", "S&P MidCap 400"), ("sp600", "S&P SmallCap 600")):
+        try:
+            extra = _wikipedia_symbols(WIKI_LISTS[key])
+            print(f"[info] נמשכו {len(extra)} טיקרים מה-{label}.")
+            tickers.extend(extra)
+        except Exception as e:
+            print(f"[warn] נכשלה משיכת {label} ({e}). ממשיך בלעדיו.")
+
+    seen, uniq = set(), []
+    for t in tickers:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    print(f"[info] סך הכול {len(uniq)} טיקרים ייחודיים ביקום הסריקה.")
+    return uniq
 
 
 def _consecutive_dividend_years(dividends: pd.Series) -> int:
@@ -387,12 +453,19 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             res.dividend_years_streak = None
 
         # --- מספר גראהם ומרווח הביטחון (פרק 20) ---
-        res.eps_ttm = info.get("trailingEps")
-        res.book_value_per_share = info.get("bookValue")
-        if res.eps_ttm is None and res.pe and res.price:
+        # מעדיפים לגזור את הרווח וההון למניה מהמחיר ומהמכפילים, ולא לקחת את
+        # השדות הגולמיים. הסיבה: בחברות עם שתי סדרות מניות (למשל BRK-A מול
+        # BRK-B) מקור הנתונים מחזיר לפעמים רווח למניה של סדרה אחת לצד הון
+        # למניה של השנייה, ומכאן יוצא אומדן שווי מופרך. המכפילים, לעומת זאת,
+        # מחושבים תמיד מול אותו מחיר ולכן עקביים בתוך עצמם.
+        if res.pe and res.price:
             res.eps_ttm = res.price / res.pe
-        if res.book_value_per_share is None and res.pb and res.price:
+        else:
+            res.eps_ttm = info.get("trailingEps")
+        if res.pb and res.price:
             res.book_value_per_share = res.price / res.pb
+        else:
+            res.book_value_per_share = info.get("bookValue")
         res.graham_number = graham_number(res.eps_ttm, res.book_value_per_share)
         if res.graham_number and res.price:
             res.margin_of_safety = (res.graham_number - res.price) / res.graham_number
@@ -405,7 +478,9 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             res.fscore, res.fscore_checks = None, {}
 
         # ===================== קריטריונים: משקיע מגן (פרק 14) =====================
-        if mode == "defensive":
+        # שני המצבים מחושבים תמיד מאותה משיכת נתונים, כדי לא לשלם פעמיים
+        # על אותן בקשות רשת. הדגל --mode קובע רק מה מוצג כציון הראשי.
+        if True:
             checks = {}
 
             # 1. גודל מספיק - מכירות לחברת תעשייה, סך נכסים לתשתית ולפיננסים
@@ -477,7 +552,7 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             res.score = sum(1 for v in checks.values() if v is True)
 
         # =================== קריטריונים: משקיע יוזם (פרק 15, מקוצר) ===================
-        elif mode == "enterprising":
+        if True:
             checks = {}
             cond_ratio = bool(res.current_ratio and res.current_ratio >= 1.5)
             cond_debt = True
@@ -501,12 +576,9 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             cond_price = bool(res.pb and res.pb <= MAX_PRICE_TO_NET_TANGIBLE_ENTERPRISING)
             checks["5_price_under_120pct_net_assets"] = cond_price
 
-            res.checks = checks
-            res.max_score = len(checks)
-            res.score = sum(1 for v in checks.values() if v)
-
-        else:
-            raise ValueError(f"מצב לא מוכר: {mode} (אפשרויות: defensive / enterprising)")
+            res.checks_ent = checks
+            res.max_score_ent = len(checks)
+            res.score_ent = sum(1 for v in checks.values() if v)
 
     except Exception as e:
         res.error = str(e)
@@ -518,7 +590,9 @@ def main():
     parser = argparse.ArgumentParser(description="סורק מניות לפי הקריטריונים של בנג'מין גראהם")
     parser.add_argument("--tickers", type=str, default=None,
                          help="רשימת טיקרים מופרדת בפסיקים, למשל: AAPL,KO,JNJ")
-    parser.add_argument("--universe", type=str, choices=["sp500"], default=None,
+    parser.add_argument("--list-only", action="store_true",
+                         help="רק מושך את רשימת הטיקרים ומדפיס כמה נמצאו, בלי לסרוק (לבדיקת מקורות הנתונים)")
+    parser.add_argument("--universe", type=str, choices=["sp500", "sp1500"], default=None,
                          help="סרוק אוסף מובנה במקום רשימה ידנית (כרגע נתמך: sp500)")
     parser.add_argument("--mode", type=str, choices=["defensive", "enterprising"], default="defensive",
                          help="defensive = פרק 14 (7 קריטריונים), enterprising = פרק 15 (5 קריטריונים)")
@@ -530,11 +604,17 @@ def main():
 
     if args.tickers:
         tickers = [x.strip().upper() for x in args.tickers.split(",") if x.strip()]
+    elif args.universe == "sp1500":
+        tickers = get_sp1500_tickers()
     elif args.universe == "sp500":
         tickers = get_sp500_tickers()
     else:
         print("[info] לא צוינו טיקרים/יקום - משתמש ברשימת ברירת המחדל של חברות גדולות ומוכרות.")
         tickers = FALLBACK_LARGE_CAPS
+
+    if args.list_only:
+        print(f"[list-only] {len(tickers)} טיקרים. עשרת הראשונים: {', '.join(tickers[:10])}")
+        return 0
 
     print(f"[info] סורק {len(tickers)} טיקרים במצב '{args.mode}'...")
     results = []

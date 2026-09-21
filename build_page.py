@@ -29,6 +29,31 @@ CRITERIA = [
     ("crit_7_moderate_pb_or_pe_x_pb", "מכפיל הון סביר", "מחיר חלקי הון, עד 1.5 - או לחלופין מכפיל רווח כפול מכפיל הון, עד 22.5"),
 ]
 
+ENT_CRITERIA = [
+    ("ent_1_financial_condition", "מצב פיננסי סביר", "יחס שוטף של 1.5 לפחות, וחוב שאינו עולה על 110% מהנכסים השוטפים נטו"),
+    ("ent_2_earnings_stability_5y", "יציבות רווחים", "רווח חיובי בכל אחת מהשנים שנבדקו"),
+    ("ent_3_pays_dividend_now", "משלמת דיבידנד", "החברה משלמת דיבידנד כלשהו כרגע - בלי דרישה להיסטוריה של 20 שנה"),
+    ("ent_4_earnings_higher_than_past", "רווח גדל", "הרווח למניה בשנה האחרונה גבוה מזה שבתחילת התקופה"),
+    ("ent_5_price_under_120pct_net_assets", "מחיר נמוך מול הנכסים", "מחיר חלקי הון, עד 1.2"),
+]
+
+MODE_META = {
+    "defensive": {
+        "title": "סורק גראהם — משקיע מגן",
+        "eyebrow": "בנג'מין גראהם · המשקיע הנבון, פרק 14",
+        "sub": "שבעת הקריטריונים של גראהם למשקיע המגן, בהתאמה לסוג החברה, ולצדם ציון פיוטרוסקי ומרווח הביטחון מפרק 20.",
+        "score_col": "score", "max_col": "max_score", "criteria": None,
+        "other_href": "enterprising.html", "other_label": "למסך המשקיע היוזם (פרק 15)",
+    },
+    "enterprising": {
+        "title": "סורק גראהם — משקיע יוזם",
+        "eyebrow": "בנג'מין גראהם · המשקיע הנבון, פרק 15",
+        "sub": "חמשת הקריטריונים המקוצרים של גראהם למשקיע היוזם. אין כאן דרישת גודל, ולכן המסך הזה פתוח גם לחברות בינוניות וקטנות - שם, לדברי גראהם, נמצאות המציאות.",
+        "score_col": "score_ent", "max_col": "max_score_ent", "criteria": None,
+        "other_href": "index.html", "other_label": "למסך המשקיע המגן (פרק 14)",
+    },
+}
+
 FSCORE_LABELS = [
     ("f_1_roa_positive", "רווח חיובי"),
     ("f_2_cfo_positive", "תזרים תפעולי חיובי"),
@@ -46,6 +71,14 @@ TYPE_LABELS = {
     "utility": "תשתית",
     "financial": "פיננסית",
 }
+
+SECTOR_NOTE = (
+    '<p style="margin-top:14px"><b>התאמה לסוג החברה.</b> גראהם ניסח את הקריטריונים האלה עבור '
+    'חברות תעשייתיות, עם כללים מותאמים לחברות תשתית. למאזן של בנק, חברת ביטוח או קרן ריט אין '
+    'חלוקה משמעותית בין נכסים שוטפים להתחייבויות שוטפות, ולכן מבחן היחס השוטף פשוט לא חל עליהן. '
+    'בדף הזה הוא מסומן אצלן כלא-רלוונטי (נקודה אפורה) ויוצא מהמכנה, כך שחברה פיננסית מדורגת '
+    'מתוך 6 ולא מתוך 7. לחברות תשתית, במקום היחס השוטף, נבדק יחס חוב להון עצמי של עד 2.</p>'
+)
 
 ISRAEL_TZ = timezone(timedelta(hours=3))
 
@@ -82,10 +115,10 @@ def _tri(val):
     return bool(val)
 
 
-def build_rows(df):
+def build_rows(df, criteria, score_col, max_col):
     rows = []
     for _, r in df.iterrows():
-        checks = [_tri(r.get(key)) for key, _label, _desc in CRITERIA]
+        checks = [_tri(r.get(key)) for key, _label, _desc in criteria]
         fchecks = [_tri(r.get(key)) for key, _label in FSCORE_LABELS]
         ctype = str(r.get("company_type") or "industrial")
         rows.append(
@@ -99,8 +132,8 @@ def build_rows(df):
                 "ticker": str(r.get("ticker", "")),
                 "name": str(r.get("name", "") or ""),
                 "sector": str(r.get("sector", "") or ""),
-                "score": int(r.get("score", 0) or 0),
-                "max_score": int(r.get("max_score", 7) or 7),
+                "score": int(r.get(score_col, 0) or 0),
+                "max_score": int(r.get(max_col, 7) or 7),
                 "pe": None if pd.isna(r.get("P/E")) else round(float(r.get("P/E")), 2),
                 "pb": None if pd.isna(r.get("P/B")) else round(float(r.get("P/B")), 2),
                 "cr": None if pd.isna(r.get("current_ratio")) else round(float(r.get("current_ratio")), 2),
@@ -117,7 +150,7 @@ PAGE_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>סורק גראהם — S&amp;P 500</title>
+<title>__TITLE__</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -152,6 +185,7 @@ h1{font-family:"Frank Ruhl Libre",Georgia,serif; font-size:clamp(28px,4.4vw,40px
 .sub{color:var(--muted); max-width:62ch; margin:0}
 .updated{margin-top:14px; font-size:13px; color:var(--muted)}
 .updated b{color:var(--ink); font-weight:600; font-family:"IBM Plex Mono",monospace; direction:ltr; unicode-bidi:isolate; display:inline-block}
+.updated a{color:var(--accent); font-weight:600}
 .stats{display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 8px}
 .stat{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:10px 16px; box-shadow:var(--shadow)}
 .stat .n{font-family:"IBM Plex Mono",monospace; font-size:21px; font-weight:500; unicode-bidi:isolate; display:block}
@@ -199,19 +233,19 @@ footer a{color:var(--accent)}
 <body>
 <div class="wrap">
 <header>
-  <div class="eyebrow">בנג'מין גראהם · המשקיע הנבון, פרק 14</div>
-  <h1>סורק גראהם — S&amp;P 500</h1>
-  <p class="sub">כל מניות מדד ה-S&amp;P 500 נבדקות מדי יום מסחר מול שבעת הקריטריונים של גראהם למשקיע המגן, בהתאמה לסוג החברה, ולצדם ציון פיוטרוסקי (F-Score) שבודק אם המצב הפיננסי משתפר או מידרדר.</p>
-  <div class="updated">עודכן לאחרונה: <b>__UPDATED__</b> · נסרקו <b>__COUNT__</b> מניות</div>
+  <div class="eyebrow">__EYEBROW__</div>
+  <h1>__TITLE__</h1>
+  <p class="sub">__SUB__</p>
+  <div class="updated">עודכן לאחרונה: <b>__UPDATED__</b> · נסרקו <b>__COUNT__</b> מניות · <a href="__OTHER_HREF__">__OTHER_LABEL__</a></div>
 </header>
 
 <div class="stats">__STATS__</div>
 
 <details class="panel">
-  <summary>מהם שבעת הקריטריונים?</summary>
+  <summary>__CRIT_PANEL_TITLE__</summary>
   <div class="body">
     <ol>__CRITERIA_LIST__</ol>
-    <p style="margin-top:14px"><b>התאמה לסוג החברה.</b> גראהם ניסח את הקריטריונים האלה עבור חברות תעשייתיות, עם כללים מותאמים לחברות תשתית. למאזן של בנק, חברת ביטוח או קרן ריט אין חלוקה משמעותית בין נכסים שוטפים להתחייבויות שוטפות, ולכן מבחן היחס השוטף פשוט לא חל עליהן. בדף הזה הוא מסומן אצלן כלא-רלוונטי (נקודה אפורה) ויוצא מהמכנה, כך שחברה פיננסית מדורגת מתוך 6 ולא מתוך 7. לחברות תשתית, במקום היחס השוטף, נבדק יחס חוב להון עצמי של עד 2.</p>
+    __SECTOR_NOTE__
     <p>הספרים של גראהם נכתבו לפני עשרות שנים, וסף "הגודל המספיק" המקורי (100 מיליון דולר מכירות ב-1970) עודכן כאן להתאמה לאינפלציה. בנוסף, מקור הנתונים החינמי (Yahoo Finance) מספק בדרך כלל 4-5 שנות דוחות ולא 10, כך שקריטריוני היציבות והצמיחה נבדקים על התקופה הזמינה.</p>
   </div>
 </details>
@@ -399,14 +433,22 @@ def main():
     ap = argparse.ArgumentParser(description="בונה דף אינטרנט מתוצאות סורק גראהם")
     ap.add_argument("--in", dest="inp", default="results.csv")
     ap.add_argument("--out", dest="out", default="docs/index.html")
+    ap.add_argument("--mode", choices=["defensive", "enterprising"], default="defensive",
+                    help="defensive = פרק 14 (ברירת מחדל), enterprising = פרק 15")
     args = ap.parse_args()
+
+    meta = MODE_META[args.mode]
+    criteria = CRITERIA if args.mode == "defensive" else ENT_CRITERIA
+    score_col, max_col = meta["score_col"], meta["max_col"]
 
     df = pd.read_csv(args.inp)
     if "error" in df.columns:
         df = df[df["error"].isna()]
-    df = df.sort_values(["score", "ticker"], ascending=[False, True])
+    if score_col not in df.columns:
+        raise SystemExit(f"[error] העמודה '{score_col}' חסרה בקובץ — צריך להריץ מחדש את הסורק.")
+    df = df.sort_values([score_col, "ticker"], ascending=[False, True])
 
-    rows = build_rows(df)
+    rows = build_rows(df, criteria, score_col, max_col)
     total = len(rows)
 
     def ratio(r):
@@ -429,7 +471,7 @@ def main():
     )
 
     criteria_html = "".join(
-        f"<li><b>{html.escape(label)}</b> — {html.escape(desc)}</li>" for _key, label, desc in CRITERIA
+        f"<li><b>{html.escape(label)}</b> — {html.escape(desc)}</li>" for _key, label, desc in criteria
     )
     fscore_html = "".join(f"<li>{html.escape(label)}</li>" for _key, label in FSCORE_LABELS)
 
@@ -437,7 +479,15 @@ def main():
 
     page = (
         PAGE_TEMPLATE.replace("__DATA__", json.dumps(rows, ensure_ascii=False))
-        .replace("__CRIT_LABELS__", json.dumps([c[1] for c in CRITERIA], ensure_ascii=False))
+        .replace("__CRIT_LABELS__", json.dumps([c[1] for c in criteria], ensure_ascii=False))
+        .replace("__TITLE__", html.escape(meta["title"]))
+        .replace("__EYEBROW__", html.escape(meta["eyebrow"]))
+        .replace("__SUB__", html.escape(meta["sub"]))
+        .replace("__OTHER_HREF__", meta["other_href"])
+        .replace("__OTHER_LABEL__", html.escape(meta["other_label"]))
+        .replace("__CRIT_PANEL_TITLE__",
+                 "מהם שבעת הקריטריונים?" if args.mode == "defensive" else "מהם חמשת הקריטריונים?")
+        .replace("__SECTOR_NOTE__", SECTOR_NOTE if args.mode == "defensive" else "")
         .replace("__F_LABELS__", json.dumps([f[1] for f in FSCORE_LABELS], ensure_ascii=False))
         .replace("__FSCORE_LIST__", fscore_html)
         .replace("__UPDATED__", updated)
