@@ -14,6 +14,7 @@ build_page.py
 import argparse
 import html
 import json
+import os
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -325,6 +326,9 @@ def main():
         .replace("__STATS__", stats_html)
         .replace("__CRITERIA_LIST__", criteria_html)
     )
+
+    out_dir = os.path.dirname(os.path.abspath(args.out))
+    os.makedirs(out_dir, exist_ok=True)
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(page)
