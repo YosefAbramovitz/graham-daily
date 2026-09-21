@@ -7,9 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       tickers:
-        description: "רשימת טיקרים לבדיקה מהירה, מופרדת בפסיקים. ריק = סריקה מלאה של ה-S&P 500. ריצת בדיקה אינה נשמרת במאגר."
+        description: "רשימת טיקרים לבדיקה מהירה, מופרדת בפסיקים. ריק = סריקה מלאה. ריצת בדיקה אינה נשמרת במאגר."
         required: false
         default: ""
+      universe:
+        description: "היקום לסריקה מלאה"
+        required: false
+        default: "sp1500"
+        type: choice
+        options: ["sp1500", "sp500"]
+      list_only:
+        description: "רק לבדוק שרשימות המדדים נמשכות, בלי לסרוק"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -21,7 +32,7 @@ concurrency:
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -36,25 +47,36 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Check the index constituent lists
+        if: ${{ inputs.list_only == true }}
+        env:
+          UNIVERSE: ${{ inputs.universe || 'sp1500' }}
+        run: python graham_screener.py --universe "$UNIVERSE" --list-only
+
       - name: Run the Graham screen
+        if: ${{ inputs.list_only != true }}
         env:
           TICKERS: ${{ inputs.tickers }}
+          UNIVERSE: ${{ inputs.universe || 'sp1500' }}
         run: |
           if [ -n "$TICKERS" ]; then
             echo "Test run over: $TICKERS"
-            python graham_screener.py --tickers "$TICKERS" --mode defensive --out results.csv --sleep 0.15
+            python graham_screener.py --tickers "$TICKERS" --out results.csv --sleep 0.15
           else
-            python graham_screener.py --universe sp500 --mode defensive --out results.csv --sleep 0.15
+            python graham_screener.py --universe "$UNIVERSE" --out results.csv --sleep 0.15
           fi
 
-      - name: Build the web page
-        run: python build_page.py --in results.csv --out docs/index.html
+      - name: Build both web pages
+        if: ${{ inputs.list_only != true }}
+        run: |
+          python build_page.py --in results.csv --out docs/index.html --mode defensive
+          python build_page.py --in results.csv --out docs/enterprising.html --mode enterprising
 
       - name: Commit and push results
-        if: ${{ inputs.tickers == '' }}
+        if: ${{ inputs.tickers == '' && inputs.list_only != true }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add results.csv docs/index.html
+          git add results.csv docs/index.html docs/enterprising.html
           git diff --staged --quiet || git commit -m "Daily Graham screen"
           git push || echo "nothing to push"
