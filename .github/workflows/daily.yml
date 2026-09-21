@@ -1,32 +1,60 @@
 name: Daily Graham screen
+
 on:
   schedule:
+    # 21:30 UTC, ראשון עד חמישי = אחרי נעילת המסחר בניו יורק
     - cron: "30 21 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "רשימת טיקרים לבדיקה מהירה, מופרדת בפסיקים. ריק = סריקה מלאה של ה-S&P 500. ריצת בדיקה אינה נשמרת במאגר."
+        required: false
+        default: ""
+
 permissions:
   contents: write
+
+concurrency:
+  group: daily-graham
+  cancel-in-progress: false
+
 jobs:
   screen:
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+
       - name: Install dependencies
         run: pip install -r requirements.txt
+
       - name: Run the Graham screen
-        run: python graham_screener.py --universe sp500 --mode defensive --out results.csv --sleep 0.15
+        env:
+          TICKERS: ${{ inputs.tickers }}
+        run: |
+          if [ -n "$TICKERS" ]; then
+            echo "Test run over: $TICKERS"
+            python graham_screener.py --tickers "$TICKERS" --mode defensive --out results.csv --sleep 0.15
+          else
+            python graham_screener.py --universe sp500 --mode defensive --out results.csv --sleep 0.15
+          fi
+
       - name: Build the web page
         run: python build_page.py --in results.csv --out docs/index.html
+
       - name: Commit and push results
+        if: ${{ inputs.tickers == '' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add results.csv docs/index.html
           git diff --staged --quiet || git commit -m "Daily Graham screen"
           git push || echo "nothing to push"
-          python-version: "3.11"
