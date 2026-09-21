@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+graham_screener.py
+===================
+
+"Screener-agent" (סורק מניות) שבודק מניות מול 7 הקריטריונים של בנג'מין גראהם
+למשקיע המגן (Defensive Investor), מתוך הספר "המשקיע הנבון" (פרק 14), וגם גרסה
+מקוצרת של 5 הקריטריונים למשקיע היוזם (Enterprising Investor, פרק 15).
+
+חשוב להבין לפני שמריצים:
+--------------------------
+1. זהו כלי סינון טכני-כמותי בלבד, שמיישם קריטריונים שגראהם כתב לפני עשרות
+   שנים. הוא לא ייעוץ השקעות, לא המלצה לקנות או למכור דבר, והתוצאות תלויות
+   לגמרי באיכות ובעדכניות הנתונים שמגיעים מהמקור החיצוני (Yahoo Finance
+   דרך הספרייה yfinance). בדקו כל מניה בעצמכם/עם יועץ מוסמך לפני החלטה.
+2. הסף המקורי של גראהם ל"גודל מספיק" (100 מיליון דולר מכירות שנתיות, נכון
+   ל-1970) שווה היום למשהו כמו מיליארד דולר ומעלה בגלל אינפלציה של יותר מ-50
+   שנה. בברירת המחדל של הסקריפט השתמשתי בסף מותאם-אינפלציה (ר' MIN_REVENUE
+   למטה) - אפשר וכדאי לשנות אותו לפי הטעם שלכם.
+3. נתונים חינמיים (yfinance/Yahoo) בדרך כלל נותנים 4-5 שנות דוחות שנתיים,
+   לא 10. הסקריפט משתמש בכל מה שיש וזה מסומן ברור בפלט (n_years_used),
+   כך שאתם יודעים על כמה שנים בפועל נבדקה כל קריטריון.
+4. כדי להריץ את זה צריך אינטרנט רגיל (לא עובד בסביבות עם חסימת רשת, כמו
+   sandbox מבודד). מריצים על המחשב האישי, בקולאב (Google Colab), או בכל
+   שרת עם גישה רגילה לאינטרנט.
+
+התקנה:
+------
+    pip install yfinance pandas requests lxml
+
+הרצה לדוגמה:
+-------------
+    # סריקת רשימת טיקרים ספציפית:
+    python3 graham_screener.py --tickers AAPL,KO,JNJ,PG,XOM,IBM,MMM
+
+    # סריקת כל מדד ה-S&P 500 (נמשך כמה דקות, יש הגבלת קצב מובנית):
+    python3 graham_screener.py --universe sp500
+
+    # סינון לפי הקריטריונים של המשקיע היוזם (פרק 15) במקום המגן (פרק 14):
+    python3 graham_screener.py --tickers AAPL,KO,JNJ --mode enterprising
+
+    # שינוי סף "גודל מספיק" (בדולרים, ברירת מחדל 1,500,000,000):
+    python3 graham_screener.py --universe sp500 --min-revenue 500000000
+
+הפלט:
+-----
+    קובץ CSV (ברירת מחדל: graham_results.csv) עם שורה לכל מניה, עמודת
+    PASS/FAIL לכל קריטריון, וציון כולל (כמה קריטריונים עברה מתוך 7 או 5),
+    ממוין מהגבוה לנמוך. גם הדפסה למסך של רשימת המניות שעברו הכי הרבה
+    קריטריונים.
+"""
+
+import argparse
+import sys
+import time
+import warnings
+from dataclasses import dataclass, field
+from typing import Optional
+
+import pandas as pd
+
+warnings.filterwarnings("ignore")
+
+# ---------------------------------------------------------------------------
+# ברירות מחדל של הקריטריונים (ניתנות לשינוי דרך שורת הפקודה או בקוד)
+# ---------------------------------------------------------------------------
+
+MIN_REVENUE_INDUSTRIAL = 1_500_000_000   # מותאם-אינפלציה ל-$100M של גראהם ב-1970
+MIN_ASSETS_UTILITY = 750_000_000         # מותאם-אינפלציה ל-$50M של גראהם ב-1970
+MIN_CURRENT_RATIO = 2.0                  # יחס שוטף מינימלי (חברות תעשייה)
+MAX_DIVIDEND_GAP_YEARS_DEFENSIVE = 20    # שנות דיבידנד רצוף נדרשות (משקיע מגן)
+MAX_DIVIDEND_GAP_YEARS_ENTERPRISING = 0  # מספיק דיבידנד כלשהו כרגע (משקיע יוזם)
+MIN_EPS_GROWTH_DEFENSIVE = 1 / 3         # צמיחת רווח למניה נדרשת על פני התקופה
+MAX_PE_DEFENSIVE = 15.0
+MAX_PB_DEFENSIVE = 1.5
+MAX_PE_TIMES_PB = 22.5                   # כלל האצבע המשולב של גראהם
+MAX_PRICE_TO_NET_TANGIBLE_ENTERPRISING = 1.20  # 120% מהנכסים המוחשיים
+
+# רשימת גיבוי אם אי אפשר למשוך את רשימת ה-S&P 500 מוויקיפדיה (למשל: אין רשת)
+FALLBACK_LARGE_CAPS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "KO", "PEP", "JNJ", "PG", "XOM", "CVX",
+    "IBM", "MMM", "CAT", "HD", "MCD", "WMT", "JPM", "V", "MA", "UNH",
+    "DIS", "VZ", "T", "CSCO", "INTC", "MRK", "PFE", "ABT", "COST", "NKE",
+]
+
+
+@dataclass
+class ScreenResult:
+    ticker: str
+    name: str = ""
+    sector: str = ""
+    error: Optional[str] = None
+    n_years_used: int = 0
+    price: Optional[float] = None
+    revenue: Optional[float] = None
+    total_assets: Optional[float] = None
+    current_ratio: Optional[float] = None
+    total_debt: Optional[float] = None
+    net_current_assets: Optional[float] = None
+    dividend_years_streak: Optional[int] = None
+    eps_growth: Optional[float] = None
+    pe: Optional[float] = None
+    pb: Optional[float] = None
+    checks: dict = field(default_factory=dict)  # criterion_name -> bool
+    score: int = 0
+    max_score: int = 0
+
+    def as_row(self) -> dict:
+        row = {
+            "ticker": self.ticker,
+            "name": self.name,
+            "sector": self.sector,
+            "error": self.error,
+            "n_years_used": self.n_years_used,
+            "price": self.price,
+            "revenue": self.revenue,
+            "total_assets": self.total_assets,
+            "current_ratio": self.current_ratio,
+            "total_debt": self.total_debt,
+            "dividend_years_streak": self.dividend_years_streak,
+            "eps_growth_over_period": self.eps_growth,
+            "P/E": self.pe,
+            "P/B": self.pb,
+            "score": self.score,
+            "max_score": self.max_score,
+        }
+        row.update({f"crit_{k}": v for k, v in self.checks.items()})
+        return row
+
+
+SP500_CSV_URL = (
+    "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/"
+    "main/data/constituents.csv"
+)
+
+
+def get_sp500_tickers() -> list:
+    """מושך את רשימת מרכיבי ה-S&P 500. מנסה קודם CSV יציב מגיטהאב, אחר כך ויקיפדיה."""
+    try:
+        df = pd.read_csv(SP500_CSV_URL)
+        tickers = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+        print(f"[info] נמשכו {len(tickers)} טיקרים מרשימת ה-S&P 500 (מקור: datasets/s-and-p-500-companies).")
+        return tickers
+    except Exception as e:
+        print(f"[warn] נכשלה משיכה מגיטהאב ({e}). מנסה ויקיפדיה...")
+
+    try:
+        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
+        df = tables[0]
+        tickers = df["Symbol"].astype(str).str.replace(".", "-", regex=False).tolist()
+        print(f"[info] נמשכו {len(tickers)} טיקרים מוויקיפדיה.")
+        return tickers
+    except Exception as e:
+        print(f"[warn] נכשלה משיכת רשימת S&P 500 ({e}). משתמש ברשימת גיבוי מצומצמת.")
+        return FALLBACK_LARGE_CAPS
+
+
+def _consecutive_dividend_years(dividends: pd.Series) -> int:
+    """סופר כמה שנים רצופות (עד השנה הנוכחית, כולל) שולם דיבידנד לפחות פעם אחת."""
+    if dividends is None or dividends.empty:
+        return 0
+    years_with_div = set(dividends.index.year)
+    from datetime import datetime
+    current_year = datetime.now().year
+    streak = 0
+    year = current_year
+    # אם עדיין לא שולם דיבידנד השנה, מתחילים לספור מהשנה שעברה
+    if year not in years_with_div:
+        year -= 1
+    while year in years_with_div:
+        streak += 1
+        year -= 1
+    return streak
+
+
+def screen_ticker(ticker: str, mode: str = "defensive",
+                   min_revenue: float = MIN_REVENUE_INDUSTRIAL,
+                   min_assets_utility: float = MIN_ASSETS_UTILITY) -> ScreenResult:
+    import yfinance as yf
+
+    res = ScreenResult(ticker=ticker)
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        res.name = info.get("shortName") or info.get("longName") or ticker
+        res.sector = info.get("sector") or ""
+        is_utility = "Utilit" in (res.sector or "")
+
+        res.price = info.get("currentPrice") or info.get("regularMarketPrice")
+        res.revenue = info.get("totalRevenue")
+        res.total_assets = None  # ממולא מהמאזן אם זמין
+        res.current_ratio = info.get("currentRatio")
+        res.total_debt = info.get("totalDebt")
+        res.pe = info.get("trailingPE")
+        res.pb = info.get("priceToBook")
+
+        # --- מאזן: נכסים שוטפים, התחייבויות שוטפות, סך נכסים ---
+        try:
+            bs = t.balance_sheet  # annual, בד"כ 4 שנים אחרונות
+            if bs is not None and not bs.empty:
+                def _row(names):
+                    for n in names:
+                        if n in bs.index:
+                            return bs.loc[n]
+                    return None
+
+                curr_assets = _row(["Total Current Assets", "Current Assets"])
+                curr_liab = _row(["Total Current Liabilities", "Current Liabilities"])
+                total_assets_row = _row(["Total Assets"])
+                if total_assets_row is not None:
+                    res.total_assets = float(total_assets_row.iloc[0])
+                if curr_assets is not None and curr_liab is not None:
+                    ca = float(curr_assets.iloc[0])
+                    cl = float(curr_liab.iloc[0])
+                    if cl:
+                        res.current_ratio = res.current_ratio or (ca / cl)
+                    res.net_current_assets = ca - cl
+        except Exception:
+            pass
+
+        # --- רווח למניה לאורך שנים (יציבות + צמיחה) ---
+        eps_by_year = {}
+        try:
+            fin = t.income_stmt  # annual income statement
+            shares = info.get("sharesOutstanding")
+            if fin is not None and not fin.empty:
+                net_income_row = None
+                for n in ["Net Income", "Net Income Common Stockholders"]:
+                    if n in fin.index:
+                        net_income_row = fin.loc[n]
+                        break
+                if net_income_row is not None:
+                    for col, val in net_income_row.items():
+                        year = col.year if hasattr(col, "year") else str(col)[:4]
+                        if pd.notna(val):
+                            eps_by_year[year] = float(val) / shares if shares else float(val)
+        except Exception:
+            pass
+        res.n_years_used = len(eps_by_year)
+
+        # --- דיבידנדים ---
+        try:
+            divs = t.dividends
+            res.dividend_years_streak = _consecutive_dividend_years(divs)
+        except Exception:
+            res.dividend_years_streak = None
+
+        # ===================== קריטריונים: משקיע מגן (פרק 14) =====================
+        if mode == "defensive":
+            checks = {}
+
+            # 1. גודל מספיק
+            if is_utility:
+                checks["1_adequate_size"] = bool(res.total_assets and res.total_assets >= min_assets_utility)
+            else:
+                checks["1_adequate_size"] = bool(res.revenue and res.revenue >= min_revenue)
+
+            # 2. מצב פיננסי איתן: יחס שוטף >= 2, וחוב לא עולה על נכסים שוטפים נטו
+            cond_ratio = bool(res.current_ratio and res.current_ratio >= MIN_CURRENT_RATIO)
+            cond_debt = True
+            if res.total_debt is not None and res.net_current_assets is not None:
+                cond_debt = res.total_debt <= max(res.net_current_assets, 0) * 1.0 if res.net_current_assets > 0 else False
+            checks["2_strong_financial_condition"] = cond_ratio and cond_debt
+
+            # 3. יציבות רווחים: אין הפסד באף אחת מהשנים שיש עליהן נתונים
+            if eps_by_year:
+                checks["3_earnings_stability"] = all(v > 0 for v in eps_by_year.values())
+            else:
+                checks["3_earnings_stability"] = False
+
+            # 4. היסטוריית דיבידנד: >= 20 שנה רצופות (או כל מה שיש, בסימון ברור)
+            checks["4_dividend_record_20y"] = bool(
+                res.dividend_years_streak and res.dividend_years_streak >= MAX_DIVIDEND_GAP_YEARS_DEFENSIVE
+            )
+
+            # 5. צמיחת רווחים: לפחות שליש גידול בין תחילת התקופה לסופה
+            if len(eps_by_year) >= 3:
+                years_sorted = sorted(eps_by_year.keys())
+                first_vals = [eps_by_year[y] for y in years_sorted[: max(1, len(years_sorted) // 3)]]
+                last_vals = [eps_by_year[y] for y in years_sorted[-max(1, len(years_sorted) // 3):]]
+                first_avg = sum(first_vals) / len(first_vals)
+                last_avg = sum(last_vals) / len(last_vals)
+                if first_avg > 0:
+                    res.eps_growth = (last_avg - first_avg) / first_avg
+                    checks["5_earnings_growth_33pct"] = res.eps_growth >= MIN_EPS_GROWTH_DEFENSIVE
+                else:
+                    checks["5_earnings_growth_33pct"] = False
+            else:
+                checks["5_earnings_growth_33pct"] = False
+
+            # 6. יחס מחיר/רווח סביר (<=15)
+            checks["6_moderate_pe_15"] = bool(res.pe and res.pe <= MAX_PE_DEFENSIVE)
+
+            # 7. יחס מחיר/הון סביר (<=1.5), או PE*PB <= 22.5
+            cond_pb = bool(res.pb and res.pb <= MAX_PB_DEFENSIVE)
+            cond_combo = bool(res.pe and res.pb and (res.pe * res.pb) <= MAX_PE_TIMES_PB)
+            checks["7_moderate_pb_or_pe_x_pb"] = cond_pb or cond_combo
+
+            res.checks = checks
+            res.max_score = len(checks)
+            res.score = sum(1 for v in checks.values() if v)
+
+        # =================== קריטריונים: משקיע יוזם (פרק 15, מקוצר) ===================
+        elif mode == "enterprising":
+            checks = {}
+            cond_ratio = bool(res.current_ratio and res.current_ratio >= 1.5)
+            cond_debt = True
+            if res.total_debt is not None and res.net_current_assets is not None and res.net_current_assets:
+                cond_debt = res.total_debt <= 1.10 * res.net_current_assets
+            checks["1_financial_condition"] = cond_ratio and cond_debt
+
+            if eps_by_year:
+                checks["2_earnings_stability_5y"] = all(v > 0 for v in eps_by_year.values())
+            else:
+                checks["2_earnings_stability_5y"] = False
+
+            checks["3_pays_dividend_now"] = bool(res.dividend_years_streak and res.dividend_years_streak >= 1)
+
+            if len(eps_by_year) >= 2:
+                years_sorted = sorted(eps_by_year.keys())
+                checks["4_earnings_higher_than_past"] = eps_by_year[years_sorted[-1]] > eps_by_year[years_sorted[0]]
+            else:
+                checks["4_earnings_higher_than_past"] = False
+
+            cond_price = bool(res.pb and res.pb <= MAX_PRICE_TO_NET_TANGIBLE_ENTERPRISING)
+            checks["5_price_under_120pct_net_assets"] = cond_price
+
+            res.checks = checks
+            res.max_score = len(checks)
+            res.score = sum(1 for v in checks.values() if v)
+
+        else:
+            raise ValueError(f"מצב לא מוכר: {mode} (אפשרויות: defensive / enterprising)")
+
+    except Exception as e:
+        res.error = str(e)
+
+    return res
+
+
+def main():
+    parser = argparse.ArgumentParser(description="סורק מניות לפי הקריטריונים של בנג'מין גראהם")
+    parser.add_argument("--tickers", type=str, default=None,
+                         help="רשימת טיקרים מופרדת בפסיקים, למשל: AAPL,KO,JNJ")
+    parser.add_argument("--universe", type=str, choices=["sp500"], default=None,
+                         help="סרוק אוסף מובנה במקום רשימה ידנית (כרגע נתמך: sp500)")
+    parser.add_argument("--mode", type=str, choices=["defensive", "enterprising"], default="defensive",
+                         help="defensive = פרק 14 (7 קריטריונים), enterprising = פרק 15 (5 קריטריונים)")
+    parser.add_argument("--min-revenue", type=float, default=MIN_REVENUE_INDUSTRIAL,
+                         help="סף מכירות שנתיות לחברת תעשייה (קריטריון 1, מגן בלבד)")
+    parser.add_argument("--out", type=str, default="graham_results.csv", help="שם קובץ הפלט")
+    parser.add_argument("--sleep", type=float, default=0.5, help="השהיה בשניות בין בקשות (מניעת חסימת קצב)")
+    args = parser.parse_args()
+
+    if args.tickers:
+        tickers = [x.strip().upper() for x in args.tickers.split(",") if x.strip()]
+    elif args.universe == "sp500":
+        tickers = get_sp500_tickers()
+    else:
+        print("[info] לא צוינו טיקרים/יקום - משתמש ברשימת ברירת המחדל של חברות גדולות ומוכרות.")
+        tickers = FALLBACK_LARGE_CAPS
+
+    print(f"[info] סורק {len(tickers)} טיקרים במצב '{args.mode}'...")
+    results = []
+    for i, tk in enumerate(tickers, 1):
+        print(f"  ({i}/{len(tickers)}) {tk} ...", end=" ", flush=True)
+        r = screen_ticker(tk, mode=args.mode, min_revenue=args.min_revenue)
+        if r.error:
+            print(f"שגיאה: {r.error}")
+        else:
+            print(f"ציון {r.score}/{r.max_score}")
+        results.append(r.as_row())
+        time.sleep(args.sleep)
+
+    df = pd.DataFrame(results)
+    if "score" in df.columns:
+        df = df.sort_values(["score", "ticker"], ascending=[False, True])
+    df.to_csv(args.out, index=False, encoding="utf-8-sig")
+    print(f"\n[done] הפלט המלא נשמר ל-{args.out}")
+
+    if "score" in df.columns and "max_score" in df.columns and not df.empty:
+        top = df[df["error"].isna()].head(15)
+        print("\nהמניות המובילות (הכי הרבה קריטריונים שעברו):")
+        cols_to_show = ["ticker", "name", "score", "max_score", "P/E", "P/B",
+                         "current_ratio", "dividend_years_streak"]
+        cols_to_show = [c for c in cols_to_show if c in top.columns]
+        print(top[cols_to_show].to_string(index=False))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
