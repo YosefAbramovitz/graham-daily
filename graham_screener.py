@@ -105,6 +105,10 @@ class ScreenResult:
     checks: dict = field(default_factory=dict)  # criterion_name -> bool
     score: int = 0
     max_score: int = 0
+    company_type: str = "industrial"            # industrial / utility / financial
+    na_criteria: list = field(default_factory=list)  # קריטריונים שלא חלים על סוג החברה
+    fscore: Optional[int] = None                # Piotroski F-Score (0-9)
+    fscore_checks: dict = field(default_factory=dict)
 
     def as_row(self) -> dict:
         row = {
@@ -124,8 +128,12 @@ class ScreenResult:
             "P/B": self.pb,
             "score": self.score,
             "max_score": self.max_score,
+            "company_type": self.company_type,
+            "na_criteria": ";".join(self.na_criteria),
+            "fscore": self.fscore,
         }
         row.update({f"crit_{k}": v for k, v in self.checks.items()})
+        row.update({f"f_{k}": v for k, v in self.fscore_checks.items()})
         return row
 
 
@@ -174,6 +182,107 @@ def _consecutive_dividend_years(dividends: pd.Series) -> int:
     return streak
 
 
+FINANCIAL_SECTORS = ("Financial", "Real Estate")
+
+
+def classify_company(sector: str) -> str:
+    """
+    מסווג את החברה לסוג שקובע אילו קריטריונים של גראהם רלוונטיים לה.
+
+    גראהם ניסח את שבעת הקריטריונים עבור חברות תעשייתיות, עם כללים מותאמים
+    לחברות תשתית. למאזן של בנק, חברת ביטוח או קרן ריט אין חלוקה משמעותית
+    בין נכסים שוטפים להתחייבויות שוטפות, ולכן מבחן היחס השוטף פשוט לא חל
+    עליהן - לא "נכשל", אלא לא רלוונטי.
+    """
+    s = sector or ""
+    if "Utilit" in s:
+        return "utility"
+    if any(k in s for k in FINANCIAL_SECTORS):
+        return "financial"
+    return "industrial"
+
+
+def _series_val(df, names, idx=0):
+    """שולף ערך משורה בדוח לפי רשימת שמות אפשריים (yfinance משנה שמות בין גרסאות)."""
+    if df is None or getattr(df, "empty", True):
+        return None
+    for n in names:
+        if n in df.index:
+            try:
+                v = df.loc[n].iloc[idx]
+            except (IndexError, KeyError):
+                continue
+            if pd.notna(v):
+                return float(v)
+    return None
+
+
+def piotroski_fscore(balance, income, cashflow) -> tuple:
+    """
+    מחשב את ציון פיוטרוסקי (F-Score): תשעה מבחנים בינאריים שבודקים אם
+    המצב הפיננסי של החברה השתפר או הידרדר בשנה האחרונה.
+
+    מחזיר (score, checks) - כאשר checks הוא מילון של שם מבחן -> True/False/None.
+    None פירושו שלא היו מספיק נתונים כדי להכריע, והמבחן נספר ככישלון
+    (כמו בגישה השמרנית המקורית).
+    """
+    c = {}
+
+    def g(df, names, idx=0):
+        return _series_val(df, names, idx)
+
+    # --- נתוני בסיס לשתי השנים האחרונות ---
+    ni_0 = g(income, ["Net Income", "Net Income Common Stockholders"], 0)
+    ni_1 = g(income, ["Net Income", "Net Income Common Stockholders"], 1)
+    ta_0 = g(balance, ["Total Assets"], 0)
+    ta_1 = g(balance, ["Total Assets"], 1)
+    cfo_0 = g(cashflow, ["Operating Cash Flow", "Total Cash From Operating Activities"], 0)
+    ltd_0 = g(balance, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 0)
+    ltd_1 = g(balance, ["Long Term Debt", "Long Term Debt And Capital Lease Obligation"], 1)
+    ca_0 = g(balance, ["Total Current Assets", "Current Assets"], 0)
+    ca_1 = g(balance, ["Total Current Assets", "Current Assets"], 1)
+    cl_0 = g(balance, ["Total Current Liabilities", "Current Liabilities"], 0)
+    cl_1 = g(balance, ["Total Current Liabilities", "Current Liabilities"], 1)
+    sh_0 = g(balance, ["Ordinary Shares Number", "Share Issued", "Common Stock"], 0)
+    sh_1 = g(balance, ["Ordinary Shares Number", "Share Issued", "Common Stock"], 1)
+    rev_0 = g(income, ["Total Revenue", "Operating Revenue"], 0)
+    rev_1 = g(income, ["Total Revenue", "Operating Revenue"], 1)
+    gp_0 = g(income, ["Gross Profit"], 0)
+    gp_1 = g(income, ["Gross Profit"], 1)
+
+    roa_0 = (ni_0 / ta_0) if (ni_0 is not None and ta_0) else None
+    roa_1 = (ni_1 / ta_1) if (ni_1 is not None and ta_1) else None
+
+    # --- רווחיות (4 מבחנים) ---
+    c["1_roa_positive"] = (roa_0 > 0) if roa_0 is not None else None
+    c["2_cfo_positive"] = (cfo_0 > 0) if cfo_0 is not None else None
+    c["3_roa_improving"] = (roa_0 > roa_1) if (roa_0 is not None and roa_1 is not None) else None
+    c["4_cfo_above_income"] = (cfo_0 > ni_0) if (cfo_0 is not None and ni_0 is not None) else None
+
+    # --- מינוף, נזילות ומקורות מימון (3 מבחנים) ---
+    lev_0 = (ltd_0 / ta_0) if (ltd_0 is not None and ta_0) else None
+    lev_1 = (ltd_1 / ta_1) if (ltd_1 is not None and ta_1) else None
+    c["5_leverage_down"] = (lev_0 <= lev_1) if (lev_0 is not None and lev_1 is not None) else None
+
+    cr_0 = (ca_0 / cl_0) if (ca_0 is not None and cl_0) else None
+    cr_1 = (ca_1 / cl_1) if (ca_1 is not None and cl_1) else None
+    c["6_current_ratio_up"] = (cr_0 > cr_1) if (cr_0 is not None and cr_1 is not None) else None
+
+    c["7_no_new_shares"] = (sh_0 <= sh_1) if (sh_0 is not None and sh_1 is not None) else None
+
+    # --- יעילות תפעולית (2 מבחנים) ---
+    gm_0 = (gp_0 / rev_0) if (gp_0 is not None and rev_0) else None
+    gm_1 = (gp_1 / rev_1) if (gp_1 is not None and rev_1) else None
+    c["8_gross_margin_up"] = (gm_0 > gm_1) if (gm_0 is not None and gm_1 is not None) else None
+
+    at_0 = (rev_0 / ta_0) if (rev_0 is not None and ta_0) else None
+    at_1 = (rev_1 / ta_1) if (rev_1 is not None and ta_1) else None
+    c["9_asset_turnover_up"] = (at_0 > at_1) if (at_0 is not None and at_1 is not None) else None
+
+    score = sum(1 for v in c.values() if v is True)
+    return score, c
+
+
 def screen_ticker(ticker: str, mode: str = "defensive",
                    min_revenue: float = MIN_REVENUE_INDUSTRIAL,
                    min_assets_utility: float = MIN_ASSETS_UTILITY) -> ScreenResult:
@@ -185,7 +294,9 @@ def screen_ticker(ticker: str, mode: str = "defensive",
         info = t.info or {}
         res.name = info.get("shortName") or info.get("longName") or ticker
         res.sector = info.get("sector") or ""
-        is_utility = "Utilit" in (res.sector or "")
+        res.company_type = classify_company(res.sector)
+        is_utility = res.company_type == "utility"
+        is_financial = res.company_type == "financial"
 
         res.price = info.get("currentPrice") or info.get("regularMarketPrice")
         res.revenue = info.get("totalRevenue")
@@ -196,6 +307,7 @@ def screen_ticker(ticker: str, mode: str = "defensive",
         res.pb = info.get("priceToBook")
 
         # --- מאזן: נכסים שוטפים, התחייבויות שוטפות, סך נכסים ---
+        bs = None
         try:
             bs = t.balance_sheet  # annual, בד"כ 4 שנים אחרונות
             if bs is not None and not bs.empty:
@@ -221,6 +333,7 @@ def screen_ticker(ticker: str, mode: str = "defensive",
 
         # --- רווח למניה לאורך שנים (יציבות + צמיחה) ---
         eps_by_year = {}
+        fin = None
         try:
             fin = t.income_stmt  # annual income statement
             shares = info.get("sharesOutstanding")
@@ -246,22 +359,44 @@ def screen_ticker(ticker: str, mode: str = "defensive",
         except Exception:
             res.dividend_years_streak = None
 
+        # --- ציון פיוטרוסקי (F-Score): שיפור או הידרדרות בשנה האחרונה ---
+        try:
+            cf = t.cashflow
+            res.fscore, res.fscore_checks = piotroski_fscore(bs, fin, cf)
+        except Exception:
+            res.fscore, res.fscore_checks = None, {}
+
         # ===================== קריטריונים: משקיע מגן (פרק 14) =====================
         if mode == "defensive":
             checks = {}
 
-            # 1. גודל מספיק
-            if is_utility:
+            # 1. גודל מספיק - מכירות לחברת תעשייה, סך נכסים לתשתית ולפיננסים
+            if is_utility or is_financial:
                 checks["1_adequate_size"] = bool(res.total_assets and res.total_assets >= min_assets_utility)
             else:
                 checks["1_adequate_size"] = bool(res.revenue and res.revenue >= min_revenue)
 
-            # 2. מצב פיננסי איתן: יחס שוטף >= 2, וחוב לא עולה על נכסים שוטפים נטו
-            cond_ratio = bool(res.current_ratio and res.current_ratio >= MIN_CURRENT_RATIO)
-            cond_debt = True
-            if res.total_debt is not None and res.net_current_assets is not None:
-                cond_debt = res.total_debt <= max(res.net_current_assets, 0) * 1.0 if res.net_current_assets > 0 else False
-            checks["2_strong_financial_condition"] = cond_ratio and cond_debt
+            # 2. מצב פיננסי איתן - המבחן משתנה לפי סוג החברה
+            if is_financial:
+                # למאזן של בנק, מבטח או ריט אין חלוקה משמעותית בין נכסים שוטפים
+                # להתחייבויות שוטפות. גראהם לא החיל את המבחן הזה על חברות כאלה,
+                # ולכן הוא מסומן כלא-רלוונטי ולא נספר לרעתן.
+                checks["2_strong_financial_condition"] = None
+                res.na_criteria.append("2_strong_financial_condition")
+            elif is_utility:
+                # לחברות תשתית גראהם החליף את היחס השוטף במבחן חוב מול הון עצמי
+                equity = _series_val(bs, ["Stockholders Equity", "Total Stockholder Equity",
+                                          "Common Stock Equity"])
+                if res.total_debt is not None and equity:
+                    checks["2_strong_financial_condition"] = res.total_debt <= 2.0 * equity
+                else:
+                    checks["2_strong_financial_condition"] = False
+            else:
+                cond_ratio = bool(res.current_ratio and res.current_ratio >= MIN_CURRENT_RATIO)
+                cond_debt = True
+                if res.total_debt is not None and res.net_current_assets is not None:
+                    cond_debt = res.total_debt <= max(res.net_current_assets, 0) * 1.0 if res.net_current_assets > 0 else False
+                checks["2_strong_financial_condition"] = cond_ratio and cond_debt
 
             # 3. יציבות רווחים: אין הפסד באף אחת מהשנים שיש עליהן נתונים
             if eps_by_year:
@@ -298,8 +433,10 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             checks["7_moderate_pb_or_pe_x_pb"] = cond_pb or cond_combo
 
             res.checks = checks
-            res.max_score = len(checks)
-            res.score = sum(1 for v in checks.values() if v)
+            # קריטריון שסומן None אינו חל על סוג החברה - הוא יוצא מהמכנה
+            # ולא נספר ככישלון, כך שחברה פיננסית מדורגת מתוך 6 ולא מתוך 7.
+            res.max_score = sum(1 for v in checks.values() if v is not None)
+            res.score = sum(1 for v in checks.values() if v is True)
 
         # =================== קריטריונים: משקיע יוזם (פרק 15, מקוצר) ===================
         elif mode == "enterprising":
@@ -369,7 +506,8 @@ def main():
         if r.error:
             print(f"שגיאה: {r.error}")
         else:
-            print(f"ציון {r.score}/{r.max_score}")
+            fs = f", F={r.fscore}/9" if r.fscore is not None else ""
+            print(f"ציון {r.score}/{r.max_score}{fs}")
         results.append(r.as_row())
         time.sleep(args.sleep)
 
@@ -382,8 +520,8 @@ def main():
     if "score" in df.columns and "max_score" in df.columns and not df.empty:
         top = df[df["error"].isna()].head(15)
         print("\nהמניות המובילות (הכי הרבה קריטריונים שעברו):")
-        cols_to_show = ["ticker", "name", "score", "max_score", "P/E", "P/B",
-                         "current_ratio", "dividend_years_streak"]
+        cols_to_show = ["ticker", "name", "company_type", "score", "max_score", "fscore",
+                         "P/E", "P/B", "current_ratio", "dividend_years_streak"]
         cols_to_show = [c for c in cols_to_show if c in top.columns]
         print(top[cols_to_show].to_string(index=False))
 

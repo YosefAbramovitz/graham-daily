@@ -20,14 +20,32 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 
 CRITERIA = [
-    ("crit_1_adequate_size", "גודל מספיק", "מכירות שנתיות מעל סף מינימלי (חברה גדולה ויציבה)"),
-    ("crit_2_strong_financial_condition", "מצב פיננסי איתן", "יחס שוטף ≥ 2, וחוב שאינו עולה על הנכסים השוטפים נטו"),
+    ("crit_1_adequate_size", "גודל מספיק", "מכירות שנתיות מעל סף מינימלי (בחברת תשתית או פיננסית נבדק סך הנכסים במקום המכירות)"),
+    ("crit_2_strong_financial_condition", "מצב פיננסי איתן", "יחס שוטף של 2 לפחות, וחוב שאינו עולה על הנכסים השוטפים נטו (בחברת תשתית: חוב של עד פי 2 מההון העצמי; בחברה פיננסית המבחן אינו חל)"),
     ("crit_3_earnings_stability", "יציבות רווחים", "רווח חיובי בכל אחת מהשנים שנבדקו"),
     ("crit_4_dividend_record_20y", "היסטוריית דיבידנד", "תשלום דיבידנד רצוף של 20 שנה לפחות"),
     ("crit_5_earnings_growth_33pct", "צמיחת רווחים", "גידול של לפחות שליש ברווח למניה על פני התקופה"),
-    ("crit_6_moderate_pe_15", "מכפיל רווח סביר", "מחיר/רווח ≤ 15"),
-    ("crit_7_moderate_pb_or_pe_x_pb", "מכפיל הון סביר", "מחיר/הון ≤ 1.5, או מכפיל רווח × מכפיל הון ≤ 22.5"),
+    ("crit_6_moderate_pe_15", "מכפיל רווח סביר", "מחיר חלקי רווח, עד 15"),
+    ("crit_7_moderate_pb_or_pe_x_pb", "מכפיל הון סביר", "מחיר חלקי הון, עד 1.5 - או לחלופין מכפיל רווח כפול מכפיל הון, עד 22.5"),
 ]
+
+FSCORE_LABELS = [
+    ("f_1_roa_positive", "רווח חיובי"),
+    ("f_2_cfo_positive", "תזרים תפעולי חיובי"),
+    ("f_3_roa_improving", "תשואה על הנכסים משתפרת"),
+    ("f_4_cfo_above_income", "תזרים גבוה מהרווח החשבונאי"),
+    ("f_5_leverage_down", "המינוף לא גדל"),
+    ("f_6_current_ratio_up", "הנזילות משתפרת"),
+    ("f_7_no_new_shares", "לא הונפקו מניות חדשות"),
+    ("f_8_gross_margin_up", "שולי הרווח הגולמי משתפרים"),
+    ("f_9_asset_turnover_up", "יעילות השימוש בנכסים משתפרת"),
+]
+
+TYPE_LABELS = {
+    "industrial": "תעשייתית",
+    "utility": "תשתית",
+    "financial": "פיננסית",
+}
 
 ISRAEL_TZ = timezone(timedelta(hours=3))
 
@@ -50,18 +68,32 @@ def fmt_int(value):
         return "—"
 
 
+def _tri(val):
+    """מתרגם ערך מהטבלה ל-True / False / None (None = אין נתון או לא רלוונטי)."""
+    if val is None or (not isinstance(val, str) and pd.isna(val)):
+        return None
+    if isinstance(val, str):
+        v = val.strip().lower()
+        if v in ("true", "1"):
+            return True
+        if v in ("false", "0"):
+            return False
+        return None
+    return bool(val)
+
+
 def build_rows(df):
     rows = []
     for _, r in df.iterrows():
-        checks = []
-        for key, _label, _desc in CRITERIA:
-            val = r.get(key)
-            if pd.isna(val):
-                checks.append(None)
-            else:
-                checks.append(bool(val) if not isinstance(val, str) else val.strip().lower() == "true")
+        checks = [_tri(r.get(key)) for key, _label, _desc in CRITERIA]
+        fchecks = [_tri(r.get(key)) for key, _label in FSCORE_LABELS]
+        ctype = str(r.get("company_type") or "industrial")
         rows.append(
             {
+                "ctype": ctype,
+                "ctype_label": TYPE_LABELS.get(ctype, ctype),
+                "fscore": None if pd.isna(r.get("fscore")) else int(r.get("fscore")),
+                "fchecks": fchecks,
                 "ticker": str(r.get("ticker", "")),
                 "name": str(r.get("name", "") or ""),
                 "sector": str(r.get("sector", "") or ""),
@@ -167,7 +199,7 @@ footer a{color:var(--accent)}
 <header>
   <div class="eyebrow">בנג'מין גראהם · המשקיע הנבון, פרק 14</div>
   <h1>סורק גראהם — S&amp;P 500</h1>
-  <p class="sub">כל מניות מדד ה-S&amp;P 500 נבדקות מדי יום מסחר מול שבעת הקריטריונים של גראהם למשקיע המגן. הציון מציין כמה קריטריונים המניה עברה מתוך שבעה.</p>
+  <p class="sub">כל מניות מדד ה-S&amp;P 500 נבדקות מדי יום מסחר מול שבעת הקריטריונים של גראהם למשקיע המגן, בהתאמה לסוג החברה, ולצדם ציון פיוטרוסקי (F-Score) שבודק אם המצב הפיננסי משתפר או מידרדר.</p>
   <div class="updated">עודכן לאחרונה: <b>__UPDATED__</b> · נסרקו <b>__COUNT__</b> מניות</div>
 </header>
 
@@ -177,18 +209,40 @@ footer a{color:var(--accent)}
   <summary>מהם שבעת הקריטריונים?</summary>
   <div class="body">
     <ol>__CRITERIA_LIST__</ol>
-    <p style="margin-top:14px">הערה חשובה: הספרים של גראהם נכתבו לפני עשרות שנים, וסף "הגודל המספיק" המקורי (100 מיליון דולר מכירות ב-1970) עודכן כאן להתאמה לאינפלציה. בנוסף, מקור הנתונים החינמי (Yahoo Finance) מספק בדרך כלל 4-5 שנות דוחות ולא 10, כך שקריטריוני היציבות והצמיחה נבדקים על התקופה הזמינה.</p>
+    <p style="margin-top:14px"><b>התאמה לסוג החברה.</b> גראהם ניסח את הקריטריונים האלה עבור חברות תעשייתיות, עם כללים מותאמים לחברות תשתית. למאזן של בנק, חברת ביטוח או קרן ריט אין חלוקה משמעותית בין נכסים שוטפים להתחייבויות שוטפות, ולכן מבחן היחס השוטף פשוט לא חל עליהן. בדף הזה הוא מסומן אצלן כלא-רלוונטי (נקודה אפורה) ויוצא מהמכנה, כך שחברה פיננסית מדורגת מתוך 6 ולא מתוך 7. לחברות תשתית, במקום היחס השוטף, נבדק יחס חוב להון עצמי של עד 2.</p>
+    <p>הספרים של גראהם נכתבו לפני עשרות שנים, וסף "הגודל המספיק" המקורי (100 מיליון דולר מכירות ב-1970) עודכן כאן להתאמה לאינפלציה. בנוסף, מקור הנתונים החינמי (Yahoo Finance) מספק בדרך כלל 4-5 שנות דוחות ולא 10, כך שקריטריוני היציבות והצמיחה נבדקים על התקופה הזמינה.</p>
+  </div>
+</details>
+
+<details class="panel">
+  <summary>מהו ציון F-Score?</summary>
+  <div class="body">
+    <p>ציון פיוטרוסקי הוא בדיקה משלימה בת תשע נקודות, שנועדה לענות על שאלה שהקריטריונים של גראהם לא שואלים: האם מצבה הפיננסי של החברה <b>משתפר או מידרדר</b> בשנה האחרונה. שיטת גראהם מצלמת תמונת מצב סטטית; פיוטרוסקי מוסיף את הכיוון.</p>
+    <p>הרעיון המקורי היה להפריד, בתוך רשימת מניות זולות, בין חברות זולות-ומשתפרות לבין חברות זולות-ומתדרדרות (מלכודות ערך). ציון 8-9 נחשב חזק, 0-2 חלש.</p>
+    <ol>__FSCORE_LIST__</ol>
+    <p>ריחוף מעל הציון בטבלה מציג אילו מהמבחנים עברו.</p>
   </div>
 </details>
 
 <div class="toolbar">
   <input type="search" id="q" placeholder="חיפוש לפי טיקר, שם או סקטור…" aria-label="חיפוש">
-  <select id="minScore" aria-label="ציון מינימלי">
-    <option value="0">כל הציונים</option>
-    <option value="7">7 מתוך 7 בלבד</option>
-    <option value="6">6 ומעלה</option>
-    <option value="5">5 ומעלה</option>
-    <option value="4">4 ומעלה</option>
+  <select id="minScore" aria-label="ציון גראהם מינימלי">
+    <option value="0">כל ציוני גראהם</option>
+    <option value="1.0">עברו את כל הקריטריונים הרלוונטיים</option>
+    <option value="0.85">85% ומעלה מהקריטריונים</option>
+    <option value="0.7">70% ומעלה מהקריטריונים</option>
+  </select>
+  <select id="minF" aria-label="F-Score מינימלי">
+    <option value="0">כל ציוני F-Score</option>
+    <option value="8">F-Score 8 ומעלה</option>
+    <option value="7">F-Score 7 ומעלה</option>
+    <option value="6">F-Score 6 ומעלה</option>
+  </select>
+  <select id="ctype" aria-label="סוג חברה">
+    <option value="">כל סוגי החברות</option>
+    <option value="industrial">תעשייתיות</option>
+    <option value="financial">פיננסיות</option>
+    <option value="utility">תשתית</option>
   </select>
 </div>
 
@@ -198,8 +252,9 @@ footer a{color:var(--accent)}
       <th data-k="ticker">טיקר <span class="arrow"></span></th>
       <th data-k="name">שם <span class="arrow"></span></th>
       <th data-k="sector">סקטור <span class="arrow"></span></th>
-      <th data-k="score">ציון <span class="arrow">▼</span></th>
-      <th data-k="checks">קריטריונים 1–7 <span class="arrow"></span></th>
+      <th data-k="score">ציון גראהם <span class="arrow">▼</span></th>
+      <th data-k="checks">קריטריונים <span class="arrow"></span></th>
+      <th data-k="fscore">F-Score <span class="arrow"></span></th>
       <th data-k="pe">מכפיל רווח <span class="arrow"></span></th>
       <th data-k="pb">מכפיל הון <span class="arrow"></span></th>
       <th data-k="cr">יחס שוטף <span class="arrow"></span></th>
@@ -219,11 +274,14 @@ footer a{color:var(--accent)}
 <script>
 const DATA = __DATA__;
 const CRIT_LABELS = __CRIT_LABELS__;
+const F_LABELS = __F_LABELS__;
 let sortKey = "score", sortDir = -1;
 
 const tb = document.getElementById("tb");
 const q = document.getElementById("q");
 const minScore = document.getElementById("minScore");
+const minF = document.getElementById("minF");
+const ctypeSel = document.getElementById("ctype");
 const noRows = document.getElementById("noRows");
 
 function scoreClass(s, m){ const r = s / m; return r >= 0.85 ? "s-hi" : (r >= 0.55 ? "s-mid" : "s-lo"); }
@@ -233,15 +291,24 @@ function intv(v){ return v === null || v === undefined ? "—" : Number(v).toLoc
 function dots(checks){
   return '<span class="dots">' + checks.map((c,i) => {
     const cls = c === null ? "u" : (c ? "y" : "n");
-    const state = c === null ? "אין נתון" : (c ? "עבר" : "לא עבר");
+    const state = c === null ? "לא רלוונטי לסוג החברה" : (c ? "עבר" : "לא עבר");
     return `<span class="dot ${cls}" title="${CRIT_LABELS[i]}: ${state}"></span>`;
   }).join("") + "</span>";
 }
 
+function fTitle(r){
+  if (r.fscore === null) return "אין מספיק נתונים לחישוב";
+  return r.fchecks.map((c,i) => `${c ? "✓" : "✗"} ${F_LABELS[i]}`).join(" · ");
+}
+
 function render(){
   const term = q.value.trim().toLowerCase();
-  const min = Number(minScore.value);
-  let rows = DATA.filter(r => r.score >= min);
+  const minRatio = Number(minScore.value);
+  const minFv = Number(minF.value);
+  const wantType = ctypeSel.value;
+  let rows = DATA.filter(r => (r.max_score ? r.score / r.max_score : 0) >= minRatio);
+  if (minFv) rows = rows.filter(r => r.fscore !== null && r.fscore >= minFv);
+  if (wantType) rows = rows.filter(r => r.ctype === wantType);
   if (term) rows = rows.filter(r =>
     r.ticker.toLowerCase().includes(term) ||
     r.name.toLowerCase().includes(term) ||
@@ -249,7 +316,12 @@ function render(){
 
   rows.sort((a,b) => {
     let x = a[sortKey], y = b[sortKey];
-    if (sortKey === "checks"){ x = a.score; y = b.score; }
+    // ציון גראהם ממוין לפי שיעור הקריטריונים שעברו, כי המכנה משתנה לפי סוג החברה
+    if (sortKey === "score" || sortKey === "checks"){
+      x = a.max_score ? a.score / a.max_score : 0;
+      y = b.max_score ? b.score / b.max_score : 0;
+      if (x === y){ x = a.score; y = b.score; }
+    }
     if (x === null || x === undefined) return 1;
     if (y === null || y === undefined) return -1;
     if (typeof x === "string") return sortDir * x.localeCompare(y);
@@ -261,8 +333,9 @@ function render(){
     <td class="tk">${r.ticker}</td>
     <td class="name">${r.name}</td>
     <td class="sector">${r.sector || "—"}</td>
-    <td><span class="score ${scoreClass(r.score, r.max_score)}">${r.score} / ${r.max_score}</span></td>
+    <td><span class="score ${scoreClass(r.score, r.max_score)}" title="${r.ctype_label} — ${r.max_score} קריטריונים רלוונטיים">${r.score} / ${r.max_score}</span></td>
     <td>${dots(r.checks)}</td>
+    <td><span class="score ${r.fscore === null ? 's-mid' : scoreClass(r.fscore, 9)}" title="${fTitle(r)}">${r.fscore === null ? "—" : r.fscore + " / 9"}</span></td>
     <td class="num">${num(r.pe)}</td>
     <td class="num">${num(r.pb)}</td>
     <td class="num">${num(r.cr)}</td>
@@ -281,7 +354,7 @@ document.querySelectorAll("th[data-k]").forEach(th => {
   });
 });
 q.addEventListener("input", render);
-minScore.addEventListener("change", render);
+[minScore, minF, ctypeSel].forEach(el => el.addEventListener("change", render));
 render();
 </script>
 </body>
@@ -302,25 +375,37 @@ def main():
 
     rows = build_rows(df)
     total = len(rows)
-    max_score = rows[0]["max_score"] if rows else 7
 
-    buckets = [(7, "עברו 7 מתוך 7"), (6, "עברו 6 ומעלה"), (5, "עברו 5 ומעלה")]
-    stats_html = f'<div class="stat"><span class="n">{total}</span><span class="l">מניות נסרקו</span></div>'
-    for threshold, label in buckets:
-        if threshold > max_score:
-            continue
-        n = sum(1 for r in rows if r["score"] >= threshold)
-        stats_html += f'<div class="stat"><span class="n">{n}</span><span class="l">{label}</span></div>'
+    def ratio(r):
+        return (r["score"] / r["max_score"]) if r["max_score"] else 0
+
+    n_perfect = sum(1 for r in rows if ratio(r) >= 1.0)
+    n_strong = sum(1 for r in rows if ratio(r) >= 0.85)
+    n_both = sum(1 for r in rows if ratio(r) >= 1.0 and (r["fscore"] or 0) >= 7)
+
+    stats = [
+        (total, "מניות נסרקו"),
+        (n_perfect, "עברו את כל הקריטריונים"),
+        (n_strong, "85% ומעלה מהקריטריונים"),
+        (n_both, "גם כל הקריטריונים וגם F-Score 7+"),
+    ]
+    stats_html = "".join(
+        f'<div class="stat"><span class="n">{n}</span><span class="l">{html.escape(label)}</span></div>'
+        for n, label in stats
+    )
 
     criteria_html = "".join(
         f"<li><b>{html.escape(label)}</b> — {html.escape(desc)}</li>" for _key, label, desc in CRITERIA
     )
+    fscore_html = "".join(f"<li>{html.escape(label)}</li>" for _key, label in FSCORE_LABELS)
 
     updated = datetime.now(ISRAEL_TZ).strftime("%d/%m/%Y %H:%M")
 
     page = (
         PAGE_TEMPLATE.replace("__DATA__", json.dumps(rows, ensure_ascii=False))
         .replace("__CRIT_LABELS__", json.dumps([c[1] for c in CRITERIA], ensure_ascii=False))
+        .replace("__F_LABELS__", json.dumps([f[1] for f in FSCORE_LABELS], ensure_ascii=False))
+        .replace("__FSCORE_LIST__", fscore_html)
         .replace("__UPDATED__", updated)
         .replace("__COUNT__", str(total))
         .replace("__STATS__", stats_html)
