@@ -94,6 +94,8 @@ def build_rows(df):
                 "ctype_label": TYPE_LABELS.get(ctype, ctype),
                 "fscore": None if pd.isna(r.get("fscore")) else int(r.get("fscore")),
                 "fchecks": fchecks,
+                "gn": None if pd.isna(r.get("graham_number")) else round(float(r.get("graham_number")), 2),
+                "mos": None if pd.isna(r.get("margin_of_safety")) else round(float(r.get("margin_of_safety")) * 100, 1),
                 "ticker": str(r.get("ticker", "")),
                 "name": str(r.get("name", "") or ""),
                 "sector": str(r.get("sector", "") or ""),
@@ -224,6 +226,16 @@ footer a{color:var(--accent)}
   </div>
 </details>
 
+<details class="panel">
+  <summary>מהו מרווח הביטחון?</summary>
+  <div class="body">
+    <p>גראהם הקדיש לרעיון הזה את הפרק האחרון בספר וקרא לו "הרעיון המרכזי של ההשקעה". הטענה שלו: לא מספיק שמניה עוברת את הקריטריונים. צריך שהמחיר יהיה נמוך משמעותית מהשווי המחושב, כדי שגם אם ההערכה שגויה — ותמיד ייתכן שהיא שגויה — ההשקעה עדיין לא תיפגע. מרווח הביטחון אינו תחליף לניתוח, אלא ההכרה בכך שכל ניתוח הוא משוער.</p>
+    <p><b>מספר גראהם</b> הוא אומדן השווי, והוא נגזר ישירות משני הקריטריונים של פרק 14: מכפיל רווח של עד 15 כפול מכפיל הון של עד 1.5, כלומר 22.5. מכאן שהשווי המרבי הוא השורש הריבועי של 22.5 כפול הרווח למניה כפול ההון העצמי למניה.</p>
+    <p><b>מרווח הביטחון</b> בטבלה הוא הפער באחוזים בין אומדן השווי הזה למחיר בשוק. ערך חיובי פירושו שהמניה נסחרת מתחת לאומדן; שלילי פירושו שהיא יקרה ממנו. גראהם חיפש מרווח משמעותי, לא כמה אחוזים בודדים.</p>
+    <p>שים לב: לחברה עם הון עצמי שלילי או עם הפסד אין מספר גראהם, והשדה יופיע ריק. זה נפוץ במיוחד בחברות שביצעו רכישות עצמיות מסיביות, ולא מעיד בהכרח על חולשה — פשוט הנוסחה אינה חלה עליהן.</p>
+  </div>
+</details>
+
 <div class="toolbar">
   <input type="search" id="q" placeholder="חיפוש לפי טיקר, שם או סקטור…" aria-label="חיפוש">
   <select id="minScore" aria-label="ציון גראהם מינימלי">
@@ -237,6 +249,12 @@ footer a{color:var(--accent)}
     <option value="8">F-Score 8 ומעלה</option>
     <option value="7">F-Score 7 ומעלה</option>
     <option value="6">F-Score 6 ומעלה</option>
+  </select>
+  <select id="minMos" aria-label="מרווח ביטחון מינימלי">
+    <option value="">כל מרווחי הביטחון</option>
+    <option value="33">מרווח ביטחון 33% ומעלה</option>
+    <option value="20">מרווח ביטחון 20% ומעלה</option>
+    <option value="0">נסחרות מתחת לאומדן השווי</option>
   </select>
   <select id="ctype" aria-label="סוג חברה">
     <option value="">כל סוגי החברות</option>
@@ -255,6 +273,8 @@ footer a{color:var(--accent)}
       <th data-k="score">ציון גראהם <span class="arrow">▼</span></th>
       <th data-k="checks">קריטריונים <span class="arrow"></span></th>
       <th data-k="fscore">F-Score <span class="arrow"></span></th>
+      <th data-k="mos">מרווח ביטחון <span class="arrow"></span></th>
+      <th data-k="gn">מספר גראהם <span class="arrow"></span></th>
       <th data-k="pe">מכפיל רווח <span class="arrow"></span></th>
       <th data-k="pb">מכפיל הון <span class="arrow"></span></th>
       <th data-k="cr">יחס שוטף <span class="arrow"></span></th>
@@ -281,6 +301,7 @@ const tb = document.getElementById("tb");
 const q = document.getElementById("q");
 const minScore = document.getElementById("minScore");
 const minF = document.getElementById("minF");
+const minMos = document.getElementById("minMos");
 const ctypeSel = document.getElementById("ctype");
 const noRows = document.getElementById("noRows");
 
@@ -301,6 +322,15 @@ function fTitle(r){
   return r.fchecks.map((c,i) => `${c ? "✓" : "✗"} ${F_LABELS[i]}`).join(" · ");
 }
 
+function mosCell(r){
+  if (r.mos === null) return '<span class="score s-mid" title="לא ניתן לחשב: הון עצמי או רווח שלילי">—</span>';
+  const cls = r.mos >= 33 ? "s-hi" : (r.mos >= 0 ? "s-mid" : "s-lo");
+  const t = r.mos >= 0
+    ? `נסחרת ${r.mos.toFixed(0)}% מתחת לאומדן השווי`
+    : `נסחרת ${Math.abs(r.mos).toFixed(0)}% מעל אומדן השווי`;
+  return `<span class="score ${cls}" title="${t}">${r.mos.toFixed(0)}%</span>`;
+}
+
 function render(){
   const term = q.value.trim().toLowerCase();
   const minRatio = Number(minScore.value);
@@ -308,6 +338,7 @@ function render(){
   const wantType = ctypeSel.value;
   let rows = DATA.filter(r => (r.max_score ? r.score / r.max_score : 0) >= minRatio);
   if (minFv) rows = rows.filter(r => r.fscore !== null && r.fscore >= minFv);
+  if (minMos.value !== "") rows = rows.filter(r => r.mos !== null && r.mos >= Number(minMos.value));
   if (wantType) rows = rows.filter(r => r.ctype === wantType);
   if (term) rows = rows.filter(r =>
     r.ticker.toLowerCase().includes(term) ||
@@ -336,6 +367,8 @@ function render(){
     <td><span class="score ${scoreClass(r.score, r.max_score)}" title="${r.ctype_label} — ${r.max_score} קריטריונים רלוונטיים">${r.score} / ${r.max_score}</span></td>
     <td>${dots(r.checks)}</td>
     <td><span class="score ${r.fscore === null ? 's-mid' : scoreClass(r.fscore, 9)}" title="${fTitle(r)}">${r.fscore === null ? "—" : r.fscore + " / 9"}</span></td>
+    <td>${mosCell(r)}</td>
+    <td class="num">${num(r.gn)}</td>
     <td class="num">${num(r.pe)}</td>
     <td class="num">${num(r.pb)}</td>
     <td class="num">${num(r.cr)}</td>
@@ -354,7 +387,7 @@ document.querySelectorAll("th[data-k]").forEach(th => {
   });
 });
 q.addEventListener("input", render);
-[minScore, minF, ctypeSel].forEach(el => el.addEventListener("change", render));
+[minScore, minF, minMos, ctypeSel].forEach(el => el.addEventListener("change", render));
 render();
 </script>
 </body>
@@ -382,12 +415,13 @@ def main():
     n_perfect = sum(1 for r in rows if ratio(r) >= 1.0)
     n_strong = sum(1 for r in rows if ratio(r) >= 0.85)
     n_both = sum(1 for r in rows if ratio(r) >= 1.0 and (r["fscore"] or 0) >= 7)
+    n_cheap = sum(1 for r in rows if r["mos"] is not None and r["mos"] >= 0)
 
     stats = [
         (total, "מניות נסרקו"),
         (n_perfect, "עברו את כל הקריטריונים"),
-        (n_strong, "85% ומעלה מהקריטריונים"),
-        (n_both, "גם כל הקריטריונים וגם F-Score 7+"),
+        (n_cheap, "נסחרות מתחת לאומדן השווי"),
+        (n_both, "כל הקריטריונים וגם F-Score 7+"),
     ]
     stats_html = "".join(
         f'<div class="stat"><span class="n">{n}</span><span class="l">{html.escape(label)}</span></div>'

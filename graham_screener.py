@@ -109,6 +109,10 @@ class ScreenResult:
     na_criteria: list = field(default_factory=list)  # קריטריונים שלא חלים על סוג החברה
     fscore: Optional[int] = None                # Piotroski F-Score (0-9)
     fscore_checks: dict = field(default_factory=dict)
+    eps_ttm: Optional[float] = None
+    book_value_per_share: Optional[float] = None
+    graham_number: Optional[float] = None       # אומדן שווי: שורש(22.5 * רווח למניה * הון למניה)
+    margin_of_safety: Optional[float] = None    # הפער באחוזים בין המחיר לאומדן השווי
 
     def as_row(self) -> dict:
         row = {
@@ -131,6 +135,10 @@ class ScreenResult:
             "company_type": self.company_type,
             "na_criteria": ";".join(self.na_criteria),
             "fscore": self.fscore,
+            "eps_ttm": self.eps_ttm,
+            "book_value_per_share": self.book_value_per_share,
+            "graham_number": self.graham_number,
+            "margin_of_safety": self.margin_of_safety,
         }
         row.update({f"crit_{k}": v for k, v in self.checks.items()})
         row.update({f"f_{k}": v for k, v in self.fscore_checks.items()})
@@ -283,6 +291,25 @@ def piotroski_fscore(balance, income, cashflow) -> tuple:
     return score, c
 
 
+def graham_number(eps: Optional[float], bvps: Optional[float]) -> Optional[float]:
+    """
+    "מספר גראהם" - אומדן השווי המרבי שגראהם היה מוכן לשלם עבור מניה.
+
+    הנוסחה נגזרת ישירות משני הקריטריונים של פרק 14: מכפיל רווח של עד 15
+    ומכפיל הון של עד 1.5. מכפלתם היא 22.5, ומכאן:
+
+        שווי = שורש ריבועי של (22.5 × רווח למניה × הון עצמי למניה)
+
+    הנוסחה מוגדרת רק כששני הנתונים חיוביים. לחברה עם הון עצמי שלילי
+    (למשל בעקבות רכישות עצמיות מסיביות) או עם הפסד - אין לה משמעות.
+    """
+    if eps is None or bvps is None:
+        return None
+    if eps <= 0 or bvps <= 0:
+        return None
+    return (22.5 * eps * bvps) ** 0.5
+
+
 def screen_ticker(ticker: str, mode: str = "defensive",
                    min_revenue: float = MIN_REVENUE_INDUSTRIAL,
                    min_assets_utility: float = MIN_ASSETS_UTILITY) -> ScreenResult:
@@ -358,6 +385,17 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             res.dividend_years_streak = _consecutive_dividend_years(divs)
         except Exception:
             res.dividend_years_streak = None
+
+        # --- מספר גראהם ומרווח הביטחון (פרק 20) ---
+        res.eps_ttm = info.get("trailingEps")
+        res.book_value_per_share = info.get("bookValue")
+        if res.eps_ttm is None and res.pe and res.price:
+            res.eps_ttm = res.price / res.pe
+        if res.book_value_per_share is None and res.pb and res.price:
+            res.book_value_per_share = res.price / res.pb
+        res.graham_number = graham_number(res.eps_ttm, res.book_value_per_share)
+        if res.graham_number and res.price:
+            res.margin_of_safety = (res.graham_number - res.price) / res.graham_number
 
         # --- ציון פיוטרוסקי (F-Score): שיפור או הידרדרות בשנה האחרונה ---
         try:
@@ -507,7 +545,8 @@ def main():
             print(f"שגיאה: {r.error}")
         else:
             fs = f", F={r.fscore}/9" if r.fscore is not None else ""
-            print(f"ציון {r.score}/{r.max_score}{fs}")
+            ms = f", MoS={r.margin_of_safety*100:.0f}%" if r.margin_of_safety is not None else ""
+            print(f"ציון {r.score}/{r.max_score}{fs}{ms}")
         results.append(r.as_row())
         time.sleep(args.sleep)
 
@@ -521,7 +560,7 @@ def main():
         top = df[df["error"].isna()].head(15)
         print("\nהמניות המובילות (הכי הרבה קריטריונים שעברו):")
         cols_to_show = ["ticker", "name", "company_type", "score", "max_score", "fscore",
-                         "P/E", "P/B", "current_ratio", "dividend_years_streak"]
+                         "price", "graham_number", "margin_of_safety", "P/E", "P/B"]
         cols_to_show = [c for c in cols_to_show if c in top.columns]
         print(top[cols_to_show].to_string(index=False))
 
