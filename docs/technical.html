@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>השלב הטכני — סורק גראהם</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700&family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f6f4ef; --paper:#fffdf9; --ink:#1c1a17; --muted:#6c6659; --line:#e2ddd1;
+  --accent:#8a6a3b; --good-bg:#e4efe2; --good-ink:#2f6b34; --bad-bg:#f3e6e4; --bad-ink:#94413a;
+  --warm-bg:#f6eeda; --warm-ink:#8a6320;
+  --unknown-bg:#eceae4; --unknown-ink:#8c867a; --shadow:0 1px 3px rgba(28,26,23,.07);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
+    --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
+    --warm-bg:#352d1c; --warm-ink:#d9b56e;
+    --unknown-bg:#2a2824; --unknown-ink:#8b857a; --shadow:0 1px 3px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
+  --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
+  --warm-bg:#352d1c; --warm-ink:#d9b56e;
+  --unknown-bg:#2a2824; --unknown-ink:#8b857a; --shadow:0 1px 3px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink); direction:rtl; text-align:right;
+  font-family:"IBM Plex Sans Hebrew",system-ui,sans-serif; font-size:15px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1320px; margin:0 auto; padding:32px 16px 72px}
+header{margin-bottom:28px}
+.eyebrow{font-size:12px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:600}
+h1{font-family:"Frank Ruhl Libre",Georgia,serif; font-size:clamp(28px,4.4vw,40px); margin:6px 0 8px; font-weight:700}
+.sub{color:var(--muted); max-width:66ch; margin:0}
+.updated{margin-top:14px; font-size:13px; color:var(--muted)}
+.updated b{color:var(--ink); font-weight:600; font-family:"IBM Plex Mono",monospace; direction:ltr; unicode-bidi:isolate; display:inline-block}
+.updated a{color:var(--accent); font-weight:600}
+.stats{display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 8px}
+.stat{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:10px 16px; box-shadow:var(--shadow)}
+.stat .n{font-family:"IBM Plex Mono",monospace; font-size:21px; font-weight:500; unicode-bidi:isolate; display:block}
+.stat .l{font-size:12px; color:var(--muted)}
+.panel{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); margin:18px 0; overflow:hidden}
+.panel > summary{cursor:pointer; padding:14px 18px; font-weight:600; list-style:none}
+.panel > summary::-webkit-details-marker{display:none}
+.panel > summary::before{content:"▸"; margin-inline-end:8px; color:var(--accent); display:inline-block; transition:transform .15s}
+.panel[open] > summary::before{transform:rotate(-90deg)}
+.panel .body{padding:2px 18px 18px; color:var(--muted)}
+.panel .body h3{color:var(--ink); font-size:14.5px; margin:16px 0 4px}
+.panel .body p{margin:4px 0}
+.toolbar{display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:20px 0 12px}
+input[type=search],select{
+  font:inherit; color:var(--ink); background:var(--paper); border:1px solid var(--line);
+  border-radius:10px; padding:9px 13px; min-width:190px;
+}
+input[type=search]:focus,select:focus{outline:2px solid var(--accent); outline-offset:1px}
+.tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
+table{border-collapse:collapse; width:100%; min-width:1120px}
+th,td{padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; vertical-align:top}
+th{position:sticky; top:0; background:var(--paper); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; z-index:1}
+th:hover{color:var(--accent)}
+th .arrow{font-size:9px; opacity:.55}
+tbody tr:hover{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+td.name{white-space:normal; direction:ltr; unicode-bidi:isolate; text-align:right; min-width:170px}
+td.tk{font-family:"IBM Plex Mono",monospace; font-weight:500; direction:ltr; unicode-bidi:isolate; text-align:right}
+td.num{font-family:"IBM Plex Mono",monospace; direction:ltr; unicode-bidi:isolate; text-align:left; font-variant-numeric:tabular-nums}
+.tag{display:inline-block; padding:3px 10px; border-radius:999px; font-weight:600; font-size:12.5px}
+.t-good{background:var(--good-bg); color:var(--good-ink)}
+.t-bad{background:var(--bad-bg); color:var(--bad-ink)}
+.t-warm{background:var(--warm-bg); color:var(--warm-ink)}
+.t-neutral{background:var(--unknown-bg); color:var(--unknown-ink)}
+.sm{display:block; font-size:11.5px; color:var(--muted); font-weight:400; margin-top:2px; white-space:nowrap}
+.sm.ltr{direction:ltr; unicode-bidi:isolate; text-align:left; font-family:"IBM Plex Mono",monospace}
+.bar{position:relative; width:118px; height:8px; border-radius:4px; background:var(--unknown-bg); margin-top:6px; direction:ltr}
+.bar .zone{position:absolute; top:0; bottom:0; background:color-mix(in srgb,var(--accent) 26%,transparent)}
+.bar .pin{position:absolute; top:-3px; width:3px; height:14px; border-radius:2px; background:var(--ink)}
+.up{color:var(--good-ink); font-weight:600}
+.down{color:var(--bad-ink); font-weight:600}
+footer{margin-top:34px; font-size:12.5px; color:var(--muted); line-height:1.75}
+footer a{color:var(--accent)}
+.empty{padding:36px; text-align:center; color:var(--muted)}
+@media (max-width:640px){ .wrap{padding:22px 16px 56px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">שלב משלים · תזמון</div>
+  <h1>השלב הטכני</h1>
+  <p class="sub">שכבת תזמון על המניות שכבר עברו את הסינון הערכי של גראהם, לפי השיטות של
+  קונסטנס בראון מתוך <i>Technical Analysis for the Trading Professional</i>. הסינון הערכי
+  אומר מה שווה לקנות. הדף הזה אומר איפה המניה עומדת כרגע ביחס למגמה שלה.</p>
+  <div class="updated">עודכן לאחרונה: <b>2026-09-22 06:05 UTC</b> · <b>28</b> מניות ·
+    <a href="index.html">המשקיע המגן</a> · <a href="enterprising.html">המשקיע היוזם</a></div>
+</header>
+
+<div class="stats"><div class="stat"><span class="n">28</span><span class="l">מניות בבדיקה</span></div><div class="stat"><span class="n">16</span><span class="l">במשטר שורי</span></div><div class="stat"><span class="n">26</span><span class="l">עם יעד היפוך חיובי</span></div><div class="stat"><span class="n">3</span><span class="l">אזור כניסה</span></div><div class="stat"><span class="n">12</span><span class="l">בתמיכה, ממתין למומנטום</span></div><div class="stat"><span class="n">1</span><span class="l">מגמה תקינה</span></div></div>
+
+<details class="panel">
+  <summary>מה מחושב כאן, ומה הספר אומר</summary>
+  <div class="body"><h3>כללי הטווח של ה-RSI (פרק 1)</h3><p>האמונה הרווחת ש-RSI מתחת ל-30 הוא מכירת יתר ומעל 70 קניית יתר נכונה רק בשוק חסר מגמה. בראון מראה שהתעלה שבה ה-RSI נע נקבעת לפי המגמה: בשוק שורי הוא נע בין תמיכה של 40 עד 50 להתנגדות של 80 עד 90, ובשוק דובי בין תמיכה של 20 עד 30 להתנגדות של 55 עד 65. לכן העמודה כאן מציגה את מיקום ה-RSI בתוך התעלה של המניה עצמה, ולא מול מספר קבוע.</p><h3>איך נקבע המשטר</h3><p>בראון לא נותנת מבחן מכני, ולכן המשטר כאן נקבע בהצלבה של שני מבחנים: המיקום מול ממוצע נע של 200 יום והכיוון שלו, והתנהגות ה-RSI עצמו לאורך 120 הנרות האחרונים. כששני המבחנים מסכימים הביטחון מסומן כוודאי. כשהם חלוקים המניה מסומנת כמצב מעבר, וזה בדיוק השלב שבראון מתארת בין המשטרים.</p><h3>Positive Reversal ויעד המחיר (פרק 8)</h3><p>תבנית שורית שבה ה-RSI עושה שפל נמוך יותר בזמן שהמחיר עושה שפל גבוה יותר. יעד המחיר מחושב בנוסחה מנספח D של הספר. בדיקת הנוסחה מול הדוגמה שבספר עצמו, על ה-S&amp;P 500, מחזירה בדיוק את היעד שבראון מציגה שם.</p><h3>האוסילטור הנגזר (פרק 14)</h3><p>RSI מוחלק שלוש פעמים: ממוצע אקספוננציאלי של 5, עליו ממוצע אקספוננציאלי של 3, ומההפרש מול ממוצע פשוט של 9 מתקבלת היסטוגרמה. כיוון עולה עם ערך שלילי הוא התאוששות מוקדמת, כיוון יורד עם ערך חיובי הוא היחלשות. בראון מזהירה שהנוסחה מיועדת למניות ולמדדי מניות ואין להשתמש בה על אג&quot;ח.</p><h3>אזהרה שחוזרת לאורך כל הספר</h3><p>בראון חוזרת ומדגישה שאף אחד מהאיתותים האלה אינו איתות מסחר בפני עצמו. היא כותבת במפורש שלקנות או למכור על סמך דפוס אחד בלבד הוא מתכון להפסד, ושכל איתות חייב להיות מלווה ביעד מחיר ובגורם נוסף שמאשר אותו. הדף הזה הוא שכבת תזמון על גבי סינון ערכי, לא מערכת מסחר.</p></div>
+</details>
+
+<div class="toolbar">
+  <input type="search" id="q" placeholder="חיפוש לפי שם או סימול" autocomplete="off">
+  <select id="sig"><option value="">כל האיתותים</option><option value="אזור כניסה">אזור כניסה (3)</option><option value="בתמיכה, ממתין למומנטום">בתמיכה, ממתין למומנטום (12)</option><option value="מגמה תקינה">מגמה תקינה (1)</option><option value="מעבר, לא ברור">מעבר, לא ברור (4)</option><option value="מגמה שלילית">מגמה שלילית (8)</option></select>
+  <select id="reg">
+    <option value="">כל המשטרים</option>
+    <option value="שורי">שורי</option>
+    <option value="דובי">דובי</option>
+    <option value="מעבר">מעבר</option>
+  </select>
+</div>
+
+<div class="tablewrap">
+  <table id="t">
+    <thead><tr>
+      <th data-k="signal_rank">איתות <span class="arrow">▲</span></th>
+      <th data-k="ticker">סימול <span class="arrow"></span></th>
+      <th data-k="name">שם <span class="arrow"></span></th>
+      <th data-k="price">מחיר <span class="arrow"></span></th>
+      <th data-k="rsi">RSI ומיקום בתעלה <span class="arrow"></span></th>
+      <th data-k="deriv_osc">אוסילטור נגזר <span class="arrow"></span></th>
+      <th data-k="pos_rev_upside_pct">יעד היפוך חיובי <span class="arrow"></span></th>
+      <th data-k="dist_sma200_pct">מול ממוצע 200 <span class="arrow"></span></th>
+      <th data-k="adx">ADX <span class="arrow"></span></th>
+      <th data-k="atr_pct">ATR <span class="arrow"></span></th>
+      <th data-k="margin_of_safety">גראהם <span class="arrow"></span></th>
+    </tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+  <div class="empty" id="none" hidden>אין מניות שתואמות את הסינון.</div>
+</div>
+
+<footer>
+  <p>המקור לשיטות: Constance M. Brown, <i>Technical Analysis for the Trading Professional</i>,
+  McGraw-Hill, 1999 — פרקים 1, 8 ו-14 ונספח D. מדד הקומפוזיט מפרק 12 אינו מחושב כאן מפני
+  שהמחברת בחרה לא לפרסם את הנוסחה בספר.</p>
+  <p>הנתונים מגיעים ממקור חינמי ועשויים להיות חלקיים או שגויים. זהו כלי סינון כמותי בלבד,
+  אינו ייעוץ השקעות ואינו המלצה לקנות או למכור נייר ערך כלשהו.</p>
+</footer>
+</div>
+
+<script>
+const DATA = [{"ticker": "EG", "price": 369.42, "rsi": 45.0, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -0.442, "deriv_dir": "עולה", "deriv_bars_since_cross": 1, "pos_rev_bars_ago": "8", "pos_rev_target": "402.44", "pos_rev_upside_pct": "8.9", "neg_rev_bars_ago": "107", "neg_rev_target": "291.54", "neg_rev_downside_pct": "-21.1", "atr_pct": 2.08, "adx": 10.9, "sma200": 345.92, "dist_sma200_pct": 6.8, "above_sma50": "לא", "signal": "אזור כניסה", "signal_rank": 1, "name": "Everest Group, Ltd.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.4329449671054327", "graham_number": "651.4711598877324"}, {"ticker": "HMN", "price": 48.2, "rsi": 34.7, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -3.378, "deriv_dir": "עולה", "deriv_bars_since_cross": 9, "pos_rev_bars_ago": "6", "pos_rev_target": "57.59", "pos_rev_upside_pct": "19.5", "neg_rev_bars_ago": "103", "neg_rev_target": "42.03", "neg_rev_downside_pct": "-12.8", "atr_pct": 2.28, "adx": 20.8, "sma200": 46.82, "dist_sma200_pct": 2.9, "above_sma50": "לא", "signal": "אזור כניסה", "signal_rank": 1, "name": "Horace Mann Educators Corporati", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 5, "margin_of_safety": "0.1937587298042354", "graham_number": "59.78359305310244"}, {"ticker": "TROW", "price": 104.63, "rsi": 35.4, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -3.664, "deriv_dir": "עולה", "deriv_bars_since_cross": 14, "pos_rev_bars_ago": "23", "pos_rev_target": "125.28", "pos_rev_upside_pct": "19.7", "neg_rev_bars_ago": "68", "neg_rev_target": "90.14", "neg_rev_downside_pct": "-13.8", "atr_pct": 2.1, "adx": 34.8, "sma200": 103.89, "dist_sma200_pct": 0.7, "above_sma50": "לא", "signal": "אזור כניסה", "signal_rank": 1, "name": "T. Rowe Price Group, Inc.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 4, "margin_of_safety": "0.0268073249059966", "graham_number": "107.51211212095642"}, {"ticker": "CB", "price": 337.26, "rsi": 43.0, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "מחזיק את התמיכה, טרם פרץ", "deriv_osc": 0.639, "deriv_dir": "יורדת", "deriv_bars_since_cross": 6, "pos_rev_bars_ago": "9", "pos_rev_target": "374.41", "pos_rev_upside_pct": "11.0", "neg_rev_bars_ago": "11", "neg_rev_target": "332.53", "neg_rev_downside_pct": "-1.4", "atr_pct": 1.57, "adx": 10.3, "sma200": 328.52, "dist_sma200_pct": 2.7, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Chubb Limited", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.0422962095955765", "graham_number": "352.15481381521977"}, {"ticker": "COLB", "price": 29.9, "rsi": 42.2, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": 0.027, "deriv_dir": "יורדת", "deriv_bars_since_cross": 11, "pos_rev_bars_ago": "13", "pos_rev_target": "33.24", "pos_rev_upside_pct": "11.2", "neg_rev_bars_ago": "68", "neg_rev_target": "25.78", "neg_rev_downside_pct": "-13.8", "atr_pct": 2.13, "adx": 28.4, "sma200": 29.8, "dist_sma200_pct": 0.3, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Columbia Banking System, Inc.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 4, "margin_of_safety": "0.234609552292769", "graham_number": "39.06502895295739"}, {"ticker": "FULT", "price": 23.28, "rsi": 40.1, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -1.673, "deriv_dir": "יורדת", "deriv_bars_since_cross": 3, "pos_rev_bars_ago": "13", "pos_rev_target": "24.98", "pos_rev_upside_pct": "7.3", "neg_rev_bars_ago": "81", "neg_rev_target": "20.65", "neg_rev_downside_pct": "-11.3", "atr_pct": 1.79, "adx": 23.0, "sma200": 21.92, "dist_sma200_pct": 6.2, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Fulton Financial Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.2177148969429735", "graham_number": "29.7589713891087"}, {"ticker": "HOMB", "price": 29.61, "rsi": 42.9, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": 0.101, "deriv_dir": "יורדת", "deriv_bars_since_cross": 11, "pos_rev_bars_ago": "13", "pos_rev_target": "32.37", "pos_rev_upside_pct": "9.3", "neg_rev_bars_ago": "59", "neg_rev_target": "24.73", "neg_rev_downside_pct": "-16.5", "atr_pct": 1.54, "adx": 19.5, "sma200": 28.44, "dist_sma200_pct": 4.1, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Home BancShares, Inc.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.1574996533577659", "graham_number": "35.14538613308586"}, {"ticker": "MTB", "price": 226.96, "rsi": 31.9, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -5.845, "deriv_dir": "יורדת", "deriv_bars_since_cross": 4, "pos_rev_bars_ago": "13", "pos_rev_target": "260.94", "pos_rev_upside_pct": "15.0", "neg_rev_bars_ago": "", "neg_rev_target": "", "neg_rev_downside_pct": "", "atr_pct": 2.0, "adx": 24.7, "sma200": 223.03, "dist_sma200_pct": 1.8, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "M&T Bank Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 7, "margin_of_safety": "0.170247156615602", "graham_number": "273.5272338137161"}, {"ticker": "ONB", "price": 25.25, "rsi": 39.3, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -1.734, "deriv_dir": "יורדת", "deriv_bars_since_cross": 2, "pos_rev_bars_ago": "13", "pos_rev_target": "27.86", "pos_rev_upside_pct": "10.3", "neg_rev_bars_ago": "68", "neg_rev_target": "21.1", "neg_rev_downside_pct": "-16.4", "atr_pct": 1.84, "adx": 24.2, "sma200": 24.32, "dist_sma200_pct": 3.8, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Old National Bancorp", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 3, "margin_of_safety": "0.2422614234982915", "graham_number": "33.32283822287761"}, {"ticker": "PFS", "price": 22.93, "rsi": 36.3, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -1.734, "deriv_dir": "יורדת", "deriv_bars_since_cross": 3, "pos_rev_bars_ago": "13", "pos_rev_target": "25.29", "pos_rev_upside_pct": "10.3", "neg_rev_bars_ago": "", "neg_rev_target": "", "neg_rev_downside_pct": "", "atr_pct": 1.81, "adx": 24.8, "sma200": 22.32, "dist_sma200_pct": 2.7, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Provident Financial Services, I", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 5, "margin_of_safety": "0.3390602156495915", "graham_number": "34.693024301050805"}, {"ticker": "SIGI", "price": 87.78, "rsi": 35.7, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -5.208, "deriv_dir": "יורדת", "deriv_bars_since_cross": 9, "pos_rev_bars_ago": "22", "pos_rev_target": "104.47", "pos_rev_upside_pct": "19.0", "neg_rev_bars_ago": "86", "neg_rev_target": "72.41", "neg_rev_downside_pct": "-17.5", "atr_pct": 2.17, "adx": 14.5, "sma200": 86.67, "dist_sma200_pct": 1.3, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Selective Insurance Group, Inc.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 5, "margin_of_safety": "0.1450874563248704", "graham_number": "102.6771693191541"}, {"ticker": "SSB", "price": 103.11, "rsi": 37.7, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -4.97, "deriv_dir": "יורדת", "deriv_bars_since_cross": 5, "pos_rev_bars_ago": "13", "pos_rev_target": "114.33", "pos_rev_upside_pct": "10.9", "neg_rev_bars_ago": "46", "neg_rev_target": "87.36", "neg_rev_downside_pct": "-15.3", "atr_pct": 1.89, "adx": 17.6, "sma200": 99.28, "dist_sma200_pct": 3.9, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "SouthState Bank Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 4, "margin_of_safety": "0.2739915356726295", "graham_number": "142.02313756152824"}, {"ticker": "TRMK", "price": 46.44, "rsi": 47.7, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": 2.079, "deriv_dir": "יורדת", "deriv_bars_since_cross": 10, "pos_rev_bars_ago": "13", "pos_rev_target": "48.64", "pos_rev_upside_pct": "4.7", "neg_rev_bars_ago": "", "neg_rev_target": "", "neg_rev_downside_pct": "", "atr_pct": 2.0, "adx": 14.2, "sma200": 44.03, "dist_sma200_pct": 5.5, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Trustmark Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 5, "margin_of_safety": "0.1860713319667379", "graham_number": "57.05659700157186"}, {"ticker": "UMBF", "price": 133.53, "rsi": 30.5, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "מתחת לתמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": -5.758, "deriv_dir": "יורדת", "deriv_bars_since_cross": 22, "pos_rev_bars_ago": "13", "pos_rev_target": "150.29", "pos_rev_upside_pct": "12.6", "neg_rev_bars_ago": "94", "neg_rev_target": "108.69", "neg_rev_downside_pct": "-18.6", "atr_pct": 2.23, "adx": 30.6, "sma200": 129.29, "dist_sma200_pct": 3.3, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "UMB Financial Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.177665460033643", "graham_number": "162.37916992452114"}, {"ticker": "WFC", "price": 86.54, "rsi": 46.4, "regime": "שורי", "regime_key": "bull", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "מחזיק את התמיכה, טרם פרץ", "deriv_osc": -5.661, "deriv_dir": "יורדת", "deriv_bars_since_cross": 4, "pos_rev_bars_ago": "21", "pos_rev_target": "88.51", "pos_rev_upside_pct": "2.3", "neg_rev_bars_ago": "10", "neg_rev_target": "69.46", "neg_rev_downside_pct": "-19.7", "atr_pct": 2.32, "adx": 12.1, "sma200": 85.17, "dist_sma200_pct": 1.6, "above_sma50": "לא", "signal": "בתמיכה, ממתין למומנטום", "signal_rank": 4, "name": "Wells Fargo & Company", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 3, "margin_of_safety": "0.0463256977889825", "graham_number": "90.74376839070104"}, {"ticker": "TMP", "price": 98.48, "rsi": 51.4, "regime": "שורי", "regime_key": "bull", "regime_confidence": "ודאי", "rsi_zone": "אמצע התעלה", "band_support": "40-50", "band_resistance": "80-90", "regime_shift": "", "deriv_osc": 0.401, "deriv_dir": "יורדת", "deriv_bars_since_cross": 11, "pos_rev_bars_ago": "13", "pos_rev_target": "104.02", "pos_rev_upside_pct": "5.6", "neg_rev_bars_ago": "", "neg_rev_target": "", "neg_rev_downside_pct": "", "atr_pct": 2.41, "adx": 14.1, "sma200": 85.55, "dist_sma200_pct": 15.1, "above_sma50": "כן", "signal": "מגמה תקינה", "signal_rank": 5, "name": "Tompkins Financial Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 4, "margin_of_safety": "0.274913992775925", "graham_number": "135.8183705365128"}, {"ticker": "IBOC", "price": 70.16, "rsi": 38.5, "regime": "מעבר", "regime_key": "transition", "regime_confidence": "לא ברור", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -0.453, "deriv_dir": "יורדת", "deriv_bars_since_cross": 1, "pos_rev_bars_ago": "13", "pos_rev_target": "74.94", "pos_rev_upside_pct": "6.8", "neg_rev_bars_ago": "111", "neg_rev_target": "64.29", "neg_rev_downside_pct": "-8.4", "atr_pct": 1.64, "adx": 27.8, "sma200": 71.6, "dist_sma200_pct": -2.0, "above_sma50": "לא", "signal": "מעבר, לא ברור", "signal_rank": 7, "name": "International Bancshares Corpor", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 5, "margin_of_safety": "0.2208691707653144", "graham_number": "90.04906155352091"}, {"ticker": "KMT", "price": 29.47, "rsi": 42.8, "regime": "מעבר", "regime_key": "transition", "regime_confidence": "לא ברור", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": 1.125, "deriv_dir": "עולה", "deriv_bars_since_cross": 13, "pos_rev_bars_ago": "18", "pos_rev_target": "41.96", "pos_rev_upside_pct": "42.4", "neg_rev_bars_ago": "10", "neg_rev_target": "28.48", "neg_rev_downside_pct": "-3.4", "atr_pct": 3.34, "adx": 7.8, "sma200": 34.4, "dist_sma200_pct": -14.3, "above_sma50": "לא", "signal": "מעבר, לא ברור", "signal_rank": 7, "name": "Kennametal Inc.", "sector": "Industrials", "graham_mode": "מגן", "graham_score": 7, "graham_max": 7, "fscore": 5, "margin_of_safety": "0.3488737603513753", "graham_number": "45.260040535155305"}, {"ticker": "L", "price": 106.75, "rsi": 30.5, "regime": "מעבר", "regime_key": "transition", "regime_confidence": "לא ברור", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -1.258, "deriv_dir": "יורדת", "deriv_bars_since_cross": 1, "pos_rev_bars_ago": "14", "pos_rev_target": "117.96", "pos_rev_upside_pct": "10.5", "neg_rev_bars_ago": "11", "neg_rev_target": "106.88", "neg_rev_downside_pct": "0.1", "atr_pct": 1.62, "adx": 21.3, "sma200": 108.92, "dist_sma200_pct": -2.0, "above_sma50": "לא", "signal": "מעבר, לא ברור", "signal_rank": 7, "name": "Loews Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 7, "margin_of_safety": "0.1848261724395491", "graham_number": "130.9536645938056"}, {"ticker": "WTFC", "price": 147.08, "rsi": 32.7, "regime": "מעבר", "regime_key": "transition", "regime_confidence": "לא ברור", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -3.409, "deriv_dir": "יורדת", "deriv_bars_since_cross": 3, "pos_rev_bars_ago": "13", "pos_rev_target": "168.56", "pos_rev_upside_pct": "14.6", "neg_rev_bars_ago": "94", "neg_rev_target": "127.19", "neg_rev_downside_pct": "-13.5", "atr_pct": 1.93, "adx": 23.0, "sma200": 149.69, "dist_sma200_pct": -1.7, "above_sma50": "לא", "signal": "מעבר, לא ברור", "signal_rank": 7, "name": "Wintrust Financial Corporation", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.1434469319445913", "graham_number": "171.71148582061434"}, {"ticker": "AGO", "price": 71.07, "rsi": 32.6, "regime": "דובי", "regime_key": "bear", "regime_confidence": "חלקי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -3.203, "deriv_dir": "יורדת", "deriv_bars_since_cross": 9, "pos_rev_bars_ago": "21", "pos_rev_target": "85.1", "pos_rev_upside_pct": "19.7", "neg_rev_bars_ago": "11", "neg_rev_target": "73.31", "neg_rev_downside_pct": "3.2", "atr_pct": 2.16, "adx": 34.0, "sma200": 81.92, "dist_sma200_pct": -13.2, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Assured Guaranty Ltd.", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.5137359262344242", "graham_number": "146.15515279515034"}, {"ticker": "FBRT", "price": 7.71, "rsi": 41.9, "regime": "דובי", "regime_key": "bear", "regime_confidence": "ודאי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -6.673, "deriv_dir": "עולה", "deriv_bars_since_cross": 10, "pos_rev_bars_ago": "", "pos_rev_target": "", "pos_rev_upside_pct": "", "neg_rev_bars_ago": "10", "neg_rev_target": "7.26", "neg_rev_downside_pct": "-5.8", "atr_pct": 3.1, "adx": 24.8, "sma200": 8.93, "dist_sma200_pct": -13.6, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Franklin BSP Realty Trust, Inc.", "sector": "Real Estate", "graham_mode": "יוזם", "graham_score": 4, "graham_max": 6, "fscore": 7, "margin_of_safety": "0.3549439446101568", "graham_number": "11.95244961360826"}, {"ticker": "GSHD", "price": 51.7, "rsi": 31.3, "regime": "דובי", "regime_key": "bear", "regime_confidence": "חלקי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -4.69, "deriv_dir": "עולה", "deriv_bars_since_cross": 15, "pos_rev_bars_ago": "8", "pos_rev_target": "75.72", "pos_rev_upside_pct": "46.5", "neg_rev_bars_ago": "19", "neg_rev_target": "58.29", "neg_rev_downside_pct": "12.7", "atr_pct": 6.4, "adx": 29.2, "sma200": 54.88, "dist_sma200_pct": -5.8, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Goosehead Insurance, Inc.", "sector": "Financial Services", "graham_mode": "יוזם", "graham_score": 3, "graham_max": 6, "fscore": 5, "margin_of_safety": "", "graham_number": ""}, {"ticker": "HIG", "price": 130.73, "rsi": 32.9, "regime": "דובי", "regime_key": "bear", "regime_confidence": "חלקי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -5.122, "deriv_dir": "יורדת", "deriv_bars_since_cross": 10, "pos_rev_bars_ago": "9", "pos_rev_target": "146.84", "pos_rev_upside_pct": "12.3", "neg_rev_bars_ago": "43", "neg_rev_target": "126.38", "neg_rev_downside_pct": "-3.3", "atr_pct": 1.8, "adx": 19.4, "sma200": 136.21, "dist_sma200_pct": -4.0, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "The Hartford Insurance Group, I", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 7, "margin_of_safety": "0.140759760270686", "graham_number": "152.1460401356247"}, {"ticker": "INGR", "price": 97.03, "rsi": 31.7, "regime": "דובי", "regime_key": "bear", "regime_confidence": "ודאי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -4.223, "deriv_dir": "עולה", "deriv_bars_since_cross": 18, "pos_rev_bars_ago": "94", "pos_rev_target": "120.5", "pos_rev_upside_pct": "24.2", "neg_rev_bars_ago": "22", "neg_rev_target": "92.24", "neg_rev_downside_pct": "-4.9", "atr_pct": 1.93, "adx": 30.2, "sma200": 107.8, "dist_sma200_pct": -10.0, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Ingredion Incorporated", "sector": "Consumer Defensive", "graham_mode": "מגן", "graham_score": 7, "graham_max": 7, "fscore": 8, "margin_of_safety": "0.2035226942140788", "graham_number": "121.82393559130476"}, {"ticker": "ORI", "price": 39.22, "rsi": 27.8, "regime": "דובי", "regime_key": "bear", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -4.349, "deriv_dir": "יורדת", "deriv_bars_since_cross": 10, "pos_rev_bars_ago": "9", "pos_rev_target": "45.05", "pos_rev_upside_pct": "14.9", "neg_rev_bars_ago": "11", "neg_rev_target": "37.19", "neg_rev_downside_pct": "-5.2", "atr_pct": 1.93, "adx": 16.1, "sma200": 41.3, "dist_sma200_pct": -5.0, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Old Republic International Corp", "sector": "Financial Services", "graham_mode": "מגן", "graham_score": 6, "graham_max": 6, "fscore": 7, "margin_of_safety": "0.2305267849658877", "graham_number": "50.96993531901081"}, {"ticker": "VICI", "price": 24.05, "rsi": 30.8, "regime": "דובי", "regime_key": "bear", "regime_confidence": "ודאי", "rsi_zone": "אמצע התעלה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -4.076, "deriv_dir": "יורדת", "deriv_bars_since_cross": 16, "pos_rev_bars_ago": "", "pos_rev_target": "", "pos_rev_upside_pct": "", "neg_rev_bars_ago": "19", "neg_rev_target": "25.63", "neg_rev_downside_pct": "6.6", "atr_pct": 1.78, "adx": 23.0, "sma200": 27.65, "dist_sma200_pct": -13.0, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "VICI Properties Inc.", "sector": "Real Estate", "graham_mode": "יוזם", "graham_score": 5, "graham_max": 6, "fscore": 6, "margin_of_safety": "0.3867346924517215", "graham_number": "39.21630606522887"}, {"ticker": "VRTS", "price": 129.85, "rsi": 24.7, "regime": "דובי", "regime_key": "bear", "regime_confidence": "חלקי", "rsi_zone": "על התמיכה", "band_support": "20-30", "band_resistance": "55-65", "regime_shift": "", "deriv_osc": -9.09, "deriv_dir": "עולה", "deriv_bars_since_cross": 22, "pos_rev_bars_ago": "35", "pos_rev_target": "190.37", "pos_rev_upside_pct": "46.6", "neg_rev_bars_ago": "26", "neg_rev_target": "112.2", "neg_rev_downside_pct": "-13.6", "atr_pct": 4.37, "adx": 37.9, "sma200": 150.62, "dist_sma200_pct": -13.8, "above_sma50": "לא", "signal": "מגמה שלילית", "signal_rank": 9, "name": "Virtus Investment Partners, Inc", "sector": "Financial Services", "graham_mode": "יוזם", "graham_score": 4, "graham_max": 6, "fscore": 4, "margin_of_safety": "0.4421573470930304", "graham_number": "232.7717311025603"}];
+const SIGCLASS = {"אזור כניסה": "good", "היפוך חיובי טרי": "good", "מעבר משטר": "good", "בתמיכה, ממתין למומנטום": "warm", "מגמה תקינה": "neutral", "מתוח": "warm", "מעבר, לא ברור": "neutral", "ריבאונד בשוק דובי": "bad", "מגמה שלילית": "bad"};
+let sortKey = "signal_rank", sortDir = 1;
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const num = v => (v === "" || v === null || v === undefined || isNaN(v)) ? null : Number(v);
+
+function rsiCell(r){
+  const v = num(r.rsi);
+  if (v === null) return "<td>—</td>";
+  const band = (r.regime === "שורי") ? [40,50,80,90] : [20,30,55,65];
+  const zoneL = band[0], zoneR = band[3];
+  const pctL = zoneL, pctW = zoneR - zoneL;
+  const cls = r.rsi_zone.indexOf("תמיכה") >= 0 ? "t-good"
+            : r.rsi_zone.indexOf("התנגדות") >= 0 ? "t-warm" : "t-neutral";
+  const shift = r.regime_shift ? `<span class="sm">${esc(r.regime_shift)}</span>` : "";
+  return `<td><span class="tag ${cls}">${v.toFixed(1)}</span>
+    <span class="sm">${esc(r.regime)} · ${esc(r.rsi_zone)}</span>
+    <div class="bar"><div class="zone" style="left:${pctL}%;width:${pctW}%"></div>
+      <div class="pin" style="left:calc(${Math.max(0,Math.min(100,v))}% - 1.5px)"></div></div>
+    <span class="sm ltr">${esc(r.band_support)} / ${esc(r.band_resistance)}</span>${shift}</td>`;
+}
+
+function derivCell(r){
+  const v = num(r.deriv_osc);
+  if (v === null) return "<td>—</td>";
+  const up = r.deriv_dir === "עולה";
+  return `<td class="num"><span class="${up?'up':'down'}">${up?"▲":"▼"} ${v.toFixed(2)}</span>
+    <span class="sm ltr">${esc(r.deriv_bars_since_cross)} bars ${v>=0?"+":"−"}</span></td>`;
+}
+
+function targetCell(r){
+  const t = num(r.pos_rev_target), up = num(r.pos_rev_upside_pct);
+  if (t === null) return `<td class="num">—</td>`;
+  const age = r.pos_rev_bars_ago === "" ? "" : `<span class="sm ltr">${r.pos_rev_bars_ago} bars ago</span>`;
+  const cls = up > 0 ? "up" : "down";
+  return `<td class="num"><span class="${cls}">${t.toFixed(2)}</span>
+    <span class="sm ltr">${up>0?"+":""}${up.toFixed(1)}%</span>${age}</td>`;
+}
+
+function grahamCell(r){
+  const mos = num(r.margin_of_safety);
+  const f = r.fscore === "" ? "" : `<span class="sm ltr">F ${r.fscore}/9</span>`;
+  const m = mos === null ? "—" : (mos*100).toFixed(1) + "%";
+  return `<td>${esc(r.graham_mode)}<span class="sm ltr">MoS ${m}</span>${f}</td>`;
+}
+
+function render(){
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const sf = document.getElementById("sig").value;
+  const rf = document.getElementById("reg").value;
+
+  let rows = DATA.filter(r => {
+    if (sf && r.signal !== sf) return false;
+    if (rf && r.regime !== rf) return false;
+    if (q && !((r.ticker||"").toLowerCase().includes(q) || (r.name||"").toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  rows.sort((a,b) => {
+    let x = a[sortKey], y = b[sortKey];
+    const nx = num(x), ny = num(y);
+    if (nx !== null && ny !== null) { x = nx; y = ny; }
+    else { x = String(x ?? ""); y = String(y ?? ""); }
+    if (x < y) return -1*sortDir;
+    if (x > y) return  1*sortDir;
+    return String(a.ticker).localeCompare(String(b.ticker));
+  });
+
+  document.getElementById("tb").innerHTML = rows.map(r => {
+    const cls = SIGCLASS[r.signal] || "neutral";
+    const d200 = num(r.dist_sma200_pct);
+    return `<tr>
+      <td><span class="tag t-${cls}">${esc(r.signal)}</span></td>
+      <td class="tk">${esc(r.ticker)}</td>
+      <td class="name">${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
+      <td class="num">${num(r.price)?.toFixed(2) ?? "—"}</td>
+      ${rsiCell(r)}
+      ${derivCell(r)}
+      ${targetCell(r)}
+      <td class="num"><span class="${d200>=0?'up':'down'}">${d200===null?"—":(d200>0?"+":"")+d200.toFixed(1)+"%"}</span>
+        <span class="sm ltr">SMA ${num(r.sma200)?.toFixed(2) ?? "—"}</span></td>
+      <td class="num">${num(r.adx)?.toFixed(1) ?? "—"}</td>
+      <td class="num">${num(r.atr_pct)?.toFixed(2) ?? "—"}%</td>
+      ${grahamCell(r)}
+    </tr>`;
+  }).join("");
+
+  document.getElementById("none").hidden = rows.length > 0;
+}
+
+document.querySelectorAll("th[data-k]").forEach(th => {
+  th.addEventListener("click", () => {
+    const k = th.dataset.k;
+    if (k === sortKey) sortDir *= -1;
+    else { sortKey = k; sortDir = (k === "signal_rank" || k === "ticker" || k === "name") ? 1 : -1; }
+    document.querySelectorAll("th .arrow").forEach(a => a.textContent = "");
+    th.querySelector(".arrow").textContent = sortDir === 1 ? "▲" : "▼";
+    render();
+  });
+});
+["q","sig","reg"].forEach(id => document.getElementById(id)
+  .addEventListener("input", render));
+render();
+</script>
+</body>
+</html>
