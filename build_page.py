@@ -236,7 +236,7 @@ footer a{color:var(--accent)}
   <div class="eyebrow">__EYEBROW__</div>
   <h1>__TITLE__</h1>
   <p class="sub">__SUB__</p>
-  <div class="updated">עודכן לאחרונה: <b>__UPDATED__</b> · נסרקו <b>__COUNT__</b> מניות · <a href="__OTHER_HREF__">__OTHER_LABEL__</a></div>
+  <div class="updated">עודכן לאחרונה: <b>__UPDATED__</b> · נסרקו <b>__COUNT__</b> מניות · <a href="__OTHER_HREF__">__OTHER_LABEL__</a> · <a href="technical.html">השלב הטכני</a></div>
 </header>
 
 <div class="stats">__STATS__</div>
