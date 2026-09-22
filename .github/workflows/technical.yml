@@ -1,0 +1,89 @@
+name: Daily technical stage
+
+on:
+  schedule:
+    # 08:00 בישראל, בכל בוקר של יום מסחר. שתי השעות מכסות שעון קיץ ושעון חורף,
+    # והצעד הראשון בעבודה מוודא שרק אחת מהן באמת ממשיכה.
+    - cron: "0 5 * * 2-6"
+    - cron: "0 6 * * 2-6"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "רשימת טיקרים לבדיקה מהירה, מופרדת בפסיקים. ריק = כל עוברי גראהם. ריצת בדיקה אינה נשמרת במאגר."
+        required: false
+        default: ""
+      mode:
+        description: "אילו עוברי גראהם לקחת"
+        required: false
+        default: "both"
+        type: choice
+        options: ["both", "defensive", "enterprising"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-technical
+  cancel-in-progress: false
+
+jobs:
+  technical:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Is it 08:00 in Israel right now
+        id: gate
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime, os
+          from zoneinfo import ZoneInfo
+          if os.environ.get("EVENT") != "schedule":
+              print("go=true")
+          else:
+              now = datetime.datetime.now(ZoneInfo("Asia/Jerusalem"))
+              print(f"go={'true' if now.hour == 8 else 'false'}")
+          PY
+        env:
+          EVENT: ${{ github.event_name }}
+
+      - name: Checkout
+        if: steps.gate.outputs.go == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.gate.outputs.go == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.gate.outputs.go == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Run the technical stage
+        if: steps.gate.outputs.go == 'true'
+        env:
+          TICKERS: ${{ inputs.tickers }}
+          MODE: ${{ inputs.mode || 'both' }}
+        run: |
+          if [ -n "$TICKERS" ]; then
+            echo "Test run over: $TICKERS"
+            python tech_screener.py --tickers "$TICKERS" --out tech_results.csv --sleep 0.15
+          else
+            python tech_screener.py --in results.csv --mode "$MODE" --out tech_results.csv --sleep 0.15
+          fi
+
+      - name: Build the technical page
+        if: steps.gate.outputs.go == 'true'
+        run: python build_tech_page.py --in tech_results.csv --out docs/technical.html
+
+      - name: Commit and push results
+        if: ${{ steps.gate.outputs.go == 'true' && inputs.tickers == '' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tech_results.csv docs/technical.html
+          git diff --staged --quiet || git commit -m "Daily technical stage"
+          git push || echo "nothing to push"
