@@ -18,10 +18,11 @@
 |---|---|
 | `graham_screener.py` | מושך נתונים מ-Yahoo Finance ומחשב את הקריטריונים לכל מניה ביקום |
 | `build_page.py` | הופך את `results.csv` לשני הדפים הערכיים |
-| `tech_screener.py` | לוקח את עוברי גראהם בלבד ומחשב עליהם שכבה טכנית |
+| `quality_screener.py` | פוסל מניות חשודות ומדרג את מי שנשאר, על עוברי גראהם בלבד |
+| `tech_screener.py` | מחשב שכבה טכנית על מה ששרד את שלב האיכות |
 | `build_tech_page.py` | הופך את `tech_results.csv` ל-`docs/technical.html` |
 | `.github/workflows/daily.yml` | הסריקה הערכית, בכל יום מסחר ב-21:30 UTC (אחרי נעילת ניו יורק) |
-| `.github/workflows/technical.yml` | השלב הטכני, בכל בוקר ב-08:00 שעון ישראל |
+| `.github/workflows/technical.yml` | שלב האיכות והשלב הטכני, בכל בוקר ב-08:00 שעון ישראל |
 
 שני התהליכים רצים על שרתי GitHub, בלי תלות במחשב כלשהו. אפשר גם להריץ ידנית
 מלשונית **Actions**.
@@ -31,6 +32,27 @@
 GitHub מריץ cron לפי UTC בלבד, ושעון ישראל זז בין UTC+2 ל-UTC+3. לכן מוגדרות שתי
 שעות, 05:00 ו-06:00 UTC, והצעד הראשון בעבודה בודק מה השעה בפועל בישראל וממשיך רק
 כשהיא 08:00. כך בדיוק ריצה אחת מתבצעת בכל בוקר, בקיץ ובחורף.
+
+## שלב האיכות
+
+מבוסס על הצנרת של Wesley R. Gray ו-Tobias E. Carlisle בספר *Quantitative Value*
+(Wiley, 2012): קודם פוסלים, ורק אחר כך מדרגים.
+
+**פסילה**
+
+* **מדד בניש** (Beneish 1999, מודל שמונת המשתנים) — סימנים של מניפולציה בדוחות.
+  מעל 1.78- חשד ממשי, בין 2.22- ל-1.78- אזור אפור.
+* **מדד אלטמן** (Altman 1968) — סכנת חדלות פירעון. מתחת ל-1.81 מצוקה.
+  אינו מחושב לבנקים ולחברות ביטוח, מפני שפותח לחברות תעשייה.
+
+מניה שנפסלה מסומנת בדף ואינה יכולה לקבל איתות כניסה, גם אם התמונה הטכנית מושלמת.
+
+**דירוג** — ממוצע דירוגים אחוזוניים של ארבעה מדדים:
+
+* EBIT חלקי שווי פעילות — מדד הזול שנמצא החזק ביותר אצל גריי וקרלייל
+* רווחיות גולמית חלקי סך הנכסים — Novy-Marx (2013)
+* מומנטום של שנים עשר חודשים בהשמטת החודש האחרון
+* תשואת החזר הון נטו — דיבידנדים ורכישות עצמיות פחות הנפקות
 
 ## השכבה הטכנית
 
@@ -58,8 +80,9 @@ python graham_screener.py --universe sp1500 --out results.csv
 python build_page.py --in results.csv --out docs/index.html --mode defensive
 python build_page.py --in results.csv --out docs/enterprising.html --mode enterprising
 
-# השלב הטכני
-python tech_screener.py --in results.csv --out tech_results.csv
+# שלב האיכות והשלב הטכני
+python quality_screener.py --in results.csv --out quality_results.csv
+python tech_screener.py --in quality_results.csv --out tech_results.csv
 python build_tech_page.py --in tech_results.csv --out docs/technical.html
 ```
 
@@ -67,6 +90,7 @@ python build_tech_page.py --in tech_results.csv --out docs/technical.html
 
 ```bash
 python graham_screener.py --tickers KO,JNJ,PG,XOM,IBM
+python quality_screener.py --tickers KO,JNJ,PG
 python tech_screener.py --tickers KO,JNJ,PG
 ```
 

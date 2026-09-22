@@ -23,6 +23,7 @@ SIGNAL_CLASS = {
     "ריבאונד בשוק דובי": "bad",
     "מגמה שלילית": "bad",
 }
+DISQUALIFIED_PREFIX = "נפסל במבחן"   # התווית נבנית דינמית עם שם המבחן שנכשל
 
 BOOK_NOTES = [
     ("כללי הטווח של ה-RSI (פרק 1)",
@@ -45,6 +46,19 @@ BOOK_NOTES = [
      "ומההפרש מול ממוצע פשוט של 9 מתקבלת היסטוגרמה. כיוון עולה עם ערך שלילי הוא "
      "התאוששות מוקדמת, כיוון יורד עם ערך חיובי הוא היחלשות. בראון מזהירה שהנוסחה "
      "מיועדת למניות ולמדדי מניות ואין להשתמש בה על אג\"ח."),
+    ("שלב האיכות שקודם לדף הזה",
+     "לפני החישוב הטכני עוברות המניות סינון נוסף, לפי הצנרת של Wesley Gray ו-Tobias "
+     "Carlisle בספר Quantitative Value: קודם פוסלים ורק אחר כך מדרגים. מדד בניש "
+     "מזהה סימנים של מניפולציה בדוחות, ומדד אלטמן מזהה סכנת חדלות פירעון. מניה "
+     "שנכשלת באחד מהם מסומנת כנפסלת ואינה יכולה לקבל איתות כניסה, גם אם התמונה "
+     "הטכנית שלה מושלמת. מדד אלטמן אינו מחושב לבנקים ולחברות ביטוח מפני שהוא "
+     "פותח לחברות תעשייה ואינו תקף למבנה המאזן שלהן."),
+    ("ציון האיכות",
+     "ממוצע של ארבעה דירוגים אחוזוניים בתוך הרשימה של היום: EBIT חלקי שווי פעילות "
+     "(מדד הזול שנמצא החזק ביותר אצל גריי וקרלייל), רווחיות גולמית חלקי סך הנכסים "
+     "(המדד של נובי-מרקס), מומנטום של שנים עשר חודשים בהשמטת החודש האחרון, "
+     "ותשואת החזר הון נטו. זהו דירוג יחסי ולא ציון מוחלט — 90 פירושו שהמניה בעשירון "
+     "העליון של הרשימה הנוכחית, לא שהיא טובה במונחים מוחלטים."),
     ("כיוון: למה הכל לונג",
      "סינון גראהם מאתר חברות זולות ויציבות פיננסית, ומרשימה כזו אי אפשר לגזור "
      "מועמדות לשורט — שורט דורש את ההפך, חברה יקרה ומתדרדרת. לכן כל איתות כניסה "
@@ -145,7 +159,7 @@ input[type=search]:focus,select:focus,input[type=number]:focus{outline:2px solid
   font-family:"IBM Plex Mono",monospace; font-size:13.5px}
 .calc .calcnote{font-size:12px; color:var(--muted)}
 .tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
-table{border-collapse:collapse; width:100%; min-width:1460px}
+table{border-collapse:collapse; width:100%; min-width:1620px}
 th,td{padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; vertical-align:top}
 th{position:sticky; top:0; background:var(--paper); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; z-index:1}
 th:hover{color:var(--accent)}
@@ -200,6 +214,7 @@ footer a{color:var(--accent)}
     <option value="כניסה">רק כניסות</option>
     <option value="החזקה">רק החזקות</option>
     <option value="יציאה">רק איתותי יציאה</option>
+    <option value="פסילה">רק נפסלות</option>
   </select>
   <select id="sig"><option value="">כל האיתותים</option>__SIG_OPTS__</select>
   <select id="reg">
@@ -232,6 +247,7 @@ footer a{color:var(--accent)}
       <th class="nosort">כמות</th>
       <th data-k="deriv_osc">אוסילטור נגזר <span class="arrow"></span></th>
       <th data-k="dist_sma200_pct">מגמה <span class="arrow"></span></th>
+      <th data-k="quality_score">איכות <span class="arrow"></span></th>
       <th data-k="margin_of_safety">גראהם <span class="arrow"></span></th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -240,6 +256,8 @@ footer a{color:var(--accent)}
 </div>
 
 <footer>
+  <p>שלב האיכות מבוסס על Wesley R. Gray ו-Tobias E. Carlisle, <i>Quantitative Value</i>,
+  Wiley 2012, ועל המאמרים המקוריים של Beneish (1999), Altman (1968) ו-Novy-Marx (2013).</p>
   <p>המקור לשיטות: Constance M. Brown, <i>Technical Analysis for the Trading Professional</i>,
   McGraw-Hill, 1999 — פרקים 1, 8 ו-14 ונספח D. מדד הקומפוזיט מפרק 12 אינו מחושב כאן מפני
   שהמחברת בחרה לא לפרסם את הנוסחה בספר.</p>
@@ -315,6 +333,7 @@ function stopCell(r){
 }
 
 function rrCell(r){
+  if (r.signal_kind === "פסילה") return `<td class="num">—</td>`;
   const v = num(r.risk_reward);
   if (v === null) return `<td class="num">—</td>`;
   const cls = v >= 2 ? "up" : (v >= 1 ? "" : "down");
@@ -323,6 +342,10 @@ function rrCell(r){
 }
 
 function sizeCell(r){
+  // מניה שנפסלה בשלב האיכות לא מקבלת גודל פוזיציה. להציג לה כמות פירושו
+  // להזמין פתיחת עסקה במניה שהרגע נפסלה.
+  if (r.signal_kind === "פסילה")
+    return `<td class="num">—<span class="sm">נפסלה</span></td>`;
   const price = num(r.price), stop = num(r.stop_price);
   const port = num(document.getElementById("port").value);
   const riskPct = num(document.getElementById("risk").value);
@@ -344,6 +367,27 @@ function sizeCell(r){
     : `<span class="sm ltr">${(100 * exposure / port).toFixed(0)}% of port</span>`;
   return `<td class="num">${shares}
     <span class="sm ltr">$${Math.round(exposure).toLocaleString("en-US")}</span>${note}</td>`;
+}
+
+function qualityCell(r){
+  const q = num(r.quality_score);
+  const red = (r.red_flag || "").trim();
+  const bits = [];
+  if (r.beneish_m !== "" && r.beneish_m !== undefined)
+    bits.push(`<span class="sm ltr">Beneish ${num(r.beneish_m)?.toFixed(2)}</span>`);
+  if (r.altman_z !== "" && r.altman_z !== undefined)
+    bits.push(`<span class="sm ltr">Altman ${num(r.altman_z)?.toFixed(2)}</span>`);
+  else if (r.altman_flag === "לא רלוונטי")
+    bits.push(`<span class="sm">אלטמן לא רלוונטי</span>`);
+  if (num(r.ebit_ev) !== null)
+    bits.push(`<span class="sm ltr">EBIT/EV ${(100*num(r.ebit_ev)).toFixed(1)}%</span>`);
+  if (num(r.momentum_12_1) !== null)
+    bits.push(`<span class="sm ltr">Mom ${(100*num(r.momentum_12_1)).toFixed(0)}%</span>`);
+
+  const head = red
+    ? `<span class="tag t-bad">${esc(red)}</span>`
+    : (q === null ? "—" : `<span class="tag t-${q>=66?'good':q>=33?'warm':'neutral'}">${q}</span>`);
+  return `<td>${head}${bits.join("")}</td>`;
 }
 
 function grahamCell(r){
@@ -378,7 +422,7 @@ function render(){
   });
 
   document.getElementById("tb").innerHTML = rows.map(r => {
-    const cls = SIGCLASS[r.signal] || "neutral";
+    const cls = SIGCLASS[r.signal] || (r.signal_kind === "פסילה" ? "bad" : "neutral");
     const d200 = num(r.dist_sma200_pct);
     return `<tr>
       <td><span class="tag t-${cls}">${esc(r.signal)}</span></td>
@@ -395,6 +439,7 @@ function render(){
       <td class="num"><span class="${d200>=0?'up':'down'}">${d200===null?"—":(d200>0?"+":"")+d200.toFixed(1)+"%"}</span>
         <span class="sm ltr">ADX ${num(r.adx)?.toFixed(1) ?? "—"}</span>
         <span class="sm ltr">ATR ${num(r.atr_pct)?.toFixed(2) ?? "—"}%</span></td>
+      ${qualityCell(r)}
       ${grahamCell(r)}
     </tr>`;
   }).join("");
@@ -458,6 +503,8 @@ def main():
              "מגמה תקינה", "איתות יציאה", "מתוח", "שבר את תעלת השורי",
              "מעבר, לא ברור", "ריבאונד בשוק דובי", "מגמה שלילית"]
     present = [s for s in order if counts.get(s)]
+    present += sorted(k for k in counts
+                      if k and k not in order and k.startswith(DISQUALIFIED_PREFIX))
 
     kinds = {}
     for r in rows:
@@ -473,6 +520,7 @@ def main():
                      if r.get("signal_kind") == "כניסה" and (_rr(r) or 0) >= 2)
 
     stats = [("מניות בבדיקה", total),
+             ("נפסלו באיכות", kinds.get("פסילה", 0)),
              ("איתותי כניסה", kinds.get("כניסה", 0)),
              ("מהם עם יחס 2 ומעלה", worthwhile),
              ("איתותי יציאה", kinds.get("יציאה", 0)),

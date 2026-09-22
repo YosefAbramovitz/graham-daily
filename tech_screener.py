@@ -573,6 +573,12 @@ def classify_signal(row: dict):
     except (TypeError, ValueError):
         rsi_now = None
 
+    # דגל אדום משלב האיכות גובר על הכל. גריי וקרלייל מדגישים שסדר הפעולות
+    # הוא העיקר: קודם פוסלים, ורק אחר כך מדרגים ומתזמנים.
+    red = str(row.get("red_flag", "") or "").strip()
+    if red:
+        return f"נפסל במבחן {red}", 6, "פסילה"
+
     # בשוק שורי בראון מקבלת ירידה עד 38-39 כמבחן של אזור התמיכה. מתחת לזה
     # התעלה השורית נשברה, וזו אזהרה ולא הזדמנות כניסה.
     broke_channel = (regime == "bull" and rsi_now is not None
@@ -582,9 +588,9 @@ def classify_signal(row: dict):
 
     # אזהרות קודמות להזדמנויות: היפוך שלילי טרי סותר כל איתות כניסה.
     if regime in ("bull", "transition") and fresh_neg:
-        return "איתות יציאה", 6, "יציאה"
+        return "איתות יציאה", 7, "יציאה"
     if broke_channel:
-        return "שבר את תעלת השורי", 8, "יציאה"
+        return "שבר את תעלת השורי", 9, "יציאה"
 
     if at_support and deriv_up:
         return "אזור כניסה", 1, "כניסה"
@@ -597,20 +603,28 @@ def classify_signal(row: dict):
     if regime == "bull" and zone == "אמצע התעלה":
         return "מגמה תקינה", 5, "החזקה"
     if regime == "bull" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "מתוח", 7, "יציאה"
+        return "מתוח", 8, "יציאה"
     if regime == "transition":
-        return "מעבר, לא ברור", 9, "המתנה"
+        return "מעבר, לא ברור", 10, "המתנה"
     if regime == "bear" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "ריבאונד בשוק דובי", 10, "המתנה"
+        return "ריבאונד בשוק דובי", 11, "המתנה"
     if regime == "bear":
-        return "מגמה שלילית", 11, "המתנה"
-    return "", 12, "המתנה"
+        return "מגמה שלילית", 12, "המתנה"
+    return "", 13, "המתנה"
 
 
 # ---------------------------------------------------------------------------
 # בחירת המניות מהסריקה הערכית
 # ---------------------------------------------------------------------------
 def select_tickers(df: pd.DataFrame, mode: str) -> pd.DataFrame:
+    # קלט שהגיע מריצת בדיקה של שלב האיכות אינו נושא את עמודות גראהם. במקרה
+    # כזה אין מה לסנן, וכל השורות עוברות הלאה.
+    needed = {"error", "score", "max_score", "score_ent", "max_score_ent"}
+    if not needed.issubset(df.columns):
+        out = df.copy()
+        out["graham_mode"] = out.get("graham_mode", "")
+        return out
+
     df = df[df["error"].isna() | (df["error"].astype(str).str.strip() == "")].copy()
 
     for col in ("score", "max_score", "score_ent", "max_score_ent"):
@@ -635,8 +649,8 @@ def select_tickers(df: pd.DataFrame, mode: str) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser(description="שלב טכני משלים לסורק גראהם")
-    ap.add_argument("--in", dest="infile", default="results.csv",
-                    help="קובץ התוצאות של הסריקה הערכית")
+    ap.add_argument("--in", dest="infile", default="quality_results.csv",
+                    help="קובץ התוצאות של שלב האיכות, או של הסריקה הערכית")
     ap.add_argument("--out", default="tech_results.csv")
     ap.add_argument("--mode", choices=["both", "defensive", "enterprising"], default="both",
                     help="אילו עוברי גראהם לקחת")
@@ -693,6 +707,15 @@ def main():
         row["fscore"] = src.get("fscore", "")
         row["margin_of_safety"] = src.get("margin_of_safety", "")
         row["graham_number"] = src.get("graham_number", "")
+
+        # שדות שלב האיכות, אם הקלט הגיע ממנו
+        for field in ("quality_score", "beneish_m", "beneish_flag", "altman_z",
+                      "altman_flag", "ebit_ev", "gross_profitability",
+                      "momentum_12_1", "net_payout_yield", "red_flag"):
+            row[field] = src.get(field, "")
+
+        # הסיווג נקבע מחדש אחרי המיזוג, כדי שדגל אדום יוכל לפסול איתות כניסה
+        row["signal"], row["signal_rank"], row["signal_kind"] = classify_signal(row)
         rows.append(row)
         print(f"[{i}/{total}] {ticker}: {row['signal']} | RSI {row['rsi']} "
               f"({row['regime']}, {row['rsi_zone']})")
