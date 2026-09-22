@@ -62,7 +62,7 @@ jobs:
         if: steps.gate.outputs.go == 'true'
         run: pip install -r requirements.txt
 
-      - name: Run the technical stage
+      - name: Run the quality stage
         if: steps.gate.outputs.go == 'true'
         env:
           TICKERS: ${{ inputs.tickers }}
@@ -70,10 +70,16 @@ jobs:
         run: |
           if [ -n "$TICKERS" ]; then
             echo "Test run over: $TICKERS"
-            python tech_screener.py --tickers "$TICKERS" --out tech_results.csv --sleep 0.15
+            python quality_screener.py --tickers "$TICKERS" --out quality_results.csv --sleep 0.2
           else
-            python tech_screener.py --in results.csv --mode "$MODE" --out tech_results.csv --sleep 0.15
+            python quality_screener.py --in results.csv --mode "$MODE" --out quality_results.csv --sleep 0.2
           fi
+
+      - name: Run the technical stage
+        if: steps.gate.outputs.go == 'true'
+        env:
+          MODE: ${{ inputs.mode || 'both' }}
+        run: python tech_screener.py --in quality_results.csv --mode "$MODE" --out tech_results.csv --sleep 0.15
 
       - name: Build the technical page
         if: steps.gate.outputs.go == 'true'
@@ -84,6 +90,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tech_results.csv docs/technical.html
+          git add quality_results.csv tech_results.csv docs/technical.html
           git diff --staged --quiet || git commit -m "Daily technical stage"
           git push || echo "nothing to push"
