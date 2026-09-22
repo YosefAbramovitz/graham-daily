@@ -376,6 +376,15 @@ def graham_number(eps: Optional[float], bvps: Optional[float]) -> Optional[float
     return (22.5 * eps * bvps) ** 0.5
 
 
+def _sane_ratio(v, lo, hi):
+    """מסנן מכפילים מופרכים שמגיעים מדי פעם ממקור הנתונים."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
 def screen_ticker(ticker: str, mode: str = "defensive",
                    min_revenue: float = MIN_REVENUE_INDUSTRIAL,
                    min_assets_utility: float = MIN_ASSETS_UTILITY) -> ScreenResult:
@@ -458,15 +467,26 @@ def screen_ticker(ticker: str, mode: str = "defensive",
         # BRK-B) מקור הנתונים מחזיר לפעמים רווח למניה של סדרה אחת לצד הון
         # למניה של השנייה, ומכאן יוצא אומדן שווי מופרך. המכפילים, לעומת זאת,
         # מחושבים תמיד מול אותו מחיר ולכן עקביים בתוך עצמם.
-        if res.pe and res.price:
-            res.eps_ttm = res.price / res.pe
+        pe_ok = _sane_ratio(res.pe, 0.5, 1000)
+        pb_ok = _sane_ratio(res.pb, 0.05, 200)
+        if pe_ok and res.price:
+            res.eps_ttm = res.price / pe_ok
         else:
             res.eps_ttm = info.get("trailingEps")
-        if res.pb and res.price:
-            res.book_value_per_share = res.price / res.pb
+        if pb_ok and res.price:
+            res.book_value_per_share = res.price / pb_ok
         else:
             res.book_value_per_share = info.get("bookValue")
         res.graham_number = graham_number(res.eps_ttm, res.book_value_per_share)
+
+        # שסתום ביטחון על הנתונים עצמם. ראינו מקרה אמיתי שבו מקור הנתונים
+        # דיווח מכפיל הון של 0.001 עבור ברקשייר האת'וויי, ומכאן יצא אומדן שווי
+        # של 21,614 דולר למניה שנסחרת ב-502 - "מרווח ביטחון" של 98% שהוא
+        # שגיאת נתונים ולא מציאה. אומדן שגבוה פי חמישה מהמחיר בקרב חברות
+        # גדולות ובינוניות הוא כמעט תמיד תקלה, ועדיף להציג ריק מאשר מספר שקרי.
+        if res.graham_number and res.price and res.graham_number > 5 * res.price:
+            res.graham_number = None
+
         if res.graham_number and res.price:
             res.margin_of_safety = (res.graham_number - res.price) / res.graham_number
 
