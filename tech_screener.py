@@ -453,27 +453,42 @@ def classify_signal(row: dict):
     zone = row.get("rsi_zone", "")
     deriv_up = row.get("deriv_dir") == "עולה"
     has_pos = row.get("pos_rev_target") != ""
-    recent_pos = has_pos and isinstance(row.get("pos_rev_bars_ago"), int) and row["pos_rev_bars_ago"] <= 60
+    recent_pos = has_pos and isinstance(row.get("pos_rev_bars_ago"), int) \
+        and row["pos_rev_bars_ago"] <= 60
 
-    if regime == "bull" and zone in ("על התמיכה", "מתחת לתמיכה") and deriv_up:
+    try:
+        rsi_now = float(row.get("rsi"))
+    except (TypeError, ValueError):
+        rsi_now = None
+
+    # בשוק שורי בראון מקבלת ירידה עד 38-39 כמבחן של אזור התמיכה. מתחת לזה
+    # התעלה השורית נשברה, וזו אזהרה ולא הזדמנות כניסה.
+    broke_channel = (regime == "bull" and rsi_now is not None
+                     and rsi_now < TRANSITION_FLOOR)
+    at_support = (regime == "bull" and not broke_channel
+                  and zone in ("על התמיכה", "מתחת לתמיכה"))
+
+    if at_support and deriv_up:
         return "אזור כניסה", 1
-    if regime == "bull" and recent_pos and deriv_up:
+    if regime == "bull" and not broke_channel and recent_pos and deriv_up:
         return "היפוך חיובי טרי", 2
     if row.get("regime_shift") == "מעבר לשוק שורי":
         return "מעבר משטר", 3
-    if regime == "bull" and zone in ("על התמיכה", "מתחת לתמיכה"):
+    if at_support:
         return "בתמיכה, ממתין למומנטום", 4
     if regime == "bull" and zone == "אמצע התעלה":
         return "מגמה תקינה", 5
     if regime == "bull" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
         return "מתוח", 6
+    if broke_channel:
+        return "שבר את תעלת השורי", 7
     if regime == "transition":
-        return "מעבר, לא ברור", 7
+        return "מעבר, לא ברור", 8
     if regime == "bear" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "ריבאונד בשוק דובי", 8
+        return "ריבאונד בשוק דובי", 9
     if regime == "bear":
-        return "מגמה שלילית", 9
-    return "", 10
+        return "מגמה שלילית", 10
+    return "", 11
 
 
 # ---------------------------------------------------------------------------
