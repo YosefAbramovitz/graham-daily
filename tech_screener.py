@@ -47,6 +47,9 @@ TRANSITION_FLOOR = 38.0
 RSI_PERIOD = 14          # בראון משתמשת ב-14 בכל גרפי המניות שבספר
 PIVOT_WINDOW = 5         # כמה נרות מכל צד מגדירים שיא או שפל מקומי ב-RSI
 LOOKBACK_DAYS = 420      # בערך שנה וחצי של מסחר, מספיק לממוצע 200 יום
+# שש שנים של נרות יומיים נמשכות כדי שיהיה מדגם סביר של תבניות היפוך קודמות
+# שממנו אפשר לאמוד כמה זמן לוקח ליעד להיסגר.
+HISTORY_PERIOD = "6y"
 
 # תבנית היפוך שהתרחשה לפני יותר מחצי שנה כבר איבדה את ערך התזמון שלה,
 # ושני צירים שרחוקים זה מזה יותר משנה מייצרים יעד מנופח.
@@ -368,6 +371,81 @@ def negative_reversal(close: pd.Series, r: pd.Series,
 # ---------------------------------------------------------------------------
 # סיכום לכל מניה
 # ---------------------------------------------------------------------------
+def reversal_history(close: pd.Series, r: pd.Series, horizon_cap: int = 250):
+    """
+    כמה זמן לוקח ל-Positive Reversal של המניה הזו להגיע ליעד שלו.
+
+    הפונקציה סורקת את כל ההיסטוריה הזמינה, מוצאת כל תבנית שורית, ובודקת אם
+    המחיר אכן הגיע ליעד שהנוסחה של בראון חישבה ותוך כמה ימי מסחר. ההנחה היא
+    שהעסקה נפתחת רק כשהציר מאושר, כלומר חמישה נרות אחרי השפל עצמו, כי לפני כן
+    אי אפשר לדעת שזה היה שפל. תבניות צעירות מדי מכדי להיסגר או להיכשל
+    אינן נספרות, כדי לא לנפח את אחוז ההצלחה.
+
+    זו סטטיסטיקה לאחור על המניה הבודדת, לא תחזית.
+    """
+    lows, highs = find_pivots(r)
+    if len(lows) < 2:
+        return {"n": 0, "hits": 0, "median_bars": None}
+
+    c = close.to_numpy()
+    rv = r.to_numpy()
+    n = len(c)
+    outcomes = []
+
+    for xi in lows:
+        match = None
+        for wi in reversed([p for p in lows if p < xi and xi - p <= MAX_PIVOT_SPAN]):
+            if rv[xi] >= rv[wi] or c[xi] <= c[wi]:
+                continue
+            between = [p for p in highs if wi < p < xi]
+            if not between:
+                continue
+            yi = max(between, key=lambda p: rv[p])
+            target = (c[xi] - c[wi]) + c[yi]
+            if not _plausible_target(target, c[xi]):
+                continue
+            match = target
+            break
+        if match is None:
+            continue
+
+        entry_idx = xi + PIVOT_WINDOW          # הציר מאושר רק כאן
+        if entry_idx >= n or match <= c[entry_idx]:
+            continue
+
+        forward = c[entry_idx:min(n, entry_idx + horizon_cap + 1)]
+        reached = np.where(forward >= match)[0]
+        if len(reached):
+            outcomes.append(int(reached[0]))
+        elif (n - entry_idx) > horizon_cap:
+            outcomes.append(None)              # נכשל בתוך חלון הזמן
+        # אחרת התבנית עדיין פתוחה, ולא סופרים אותה כלל
+
+    hits = [b for b in outcomes if b is not None]
+    return {
+        "n": len(outcomes),
+        "hits": len(hits),
+        "median_bars": int(np.median(hits)) if hits else None,
+    }
+
+
+def structural_stop(close: pd.Series, low: pd.Series, a: pd.Series,
+                    pos: dict | None) -> float | None:
+    """
+    הרמה שבה התבנית מתבטלת. בראון חוזרת ומדגישה שהסטופ נכנס באותו רגע
+    שבו נכנסת הפקודה, ולכן הוא נגזר מהמבנה של התבנית ולא מאחוז שרירותי:
+    השפל הנמוך ביותר מאז הציר שיצר את האיתות, פחות חצי ATR כמרווח רעש.
+    """
+    bars = 20
+    if pos and isinstance(pos.get("bars_ago"), int):
+        bars = max(10, min(60, pos["bars_ago"] + PIVOT_WINDOW))
+    window = low.iloc[-bars:]
+    if window.empty:
+        return None
+    atr_now = float(a.iloc[-1]) if not math.isnan(a.iloc[-1]) else 0.0
+    return float(window.min()) - 0.5 * atr_now
+
+
 def summarize(ticker: str, hist: pd.DataFrame) -> dict:
     close = hist["Close"].astype(float)
     high = hist["High"].astype(float)
@@ -414,6 +492,21 @@ def summarize(ticker: str, hist: pd.DataFrame) -> dict:
     dist200 = (price / sma200_now - 1.0) * 100.0 if sma200_now and not math.isnan(sma200_now) else float("nan")
     sma50_now = float(sma50.iloc[-1]) if not math.isnan(sma50.iloc[-1]) else float("nan")
 
+    # ----- אופק זמן, סטופ ויחס סיכון לתשואה -----
+    hist_stats = reversal_history(close, r)
+    stop = structural_stop(close, low, a, pos)
+    stop_pct = ((stop / price - 1.0) * 100.0) if (stop and 0 < stop < price) else None
+
+    rr = None
+    if pos and stop and 0 < stop < price:
+        reward = pos["target"] - price
+        risk = price - stop
+        if reward > 0 and risk > 0:
+            rr = reward / risk
+
+    median_bars = hist_stats["median_bars"]
+    horizon_weeks = round(median_bars / 5.0, 1) if median_bars else ""
+
     row = {
         "ticker": ticker,
         "price": round(price, 2),
@@ -439,22 +532,41 @@ def summarize(ticker: str, hist: pd.DataFrame) -> dict:
         "sma200": round(sma200_now, 2) if not math.isnan(sma200_now) else "",
         "dist_sma200_pct": round(dist200, 1) if not math.isnan(dist200) else "",
         "above_sma50": "" if math.isnan(sma50_now) else ("כן" if price > sma50_now else "לא"),
+        "direction": "לונג",
+        "stop_price": round(stop, 2) if stop and stop > 0 else "",
+        "stop_pct": round(stop_pct, 1) if stop_pct is not None else "",
+        "risk_reward": round(rr, 2) if rr else "",
+        "hist_patterns": hist_stats["n"],
+        "hist_hits": hist_stats["hits"],
+        "hist_hit_rate": round(100.0 * hist_stats["hits"] / hist_stats["n"], 0)
+                         if hist_stats["n"] else "",
+        "hist_median_bars": median_bars if median_bars else "",
+        "horizon_weeks": horizon_weeks,
     }
-    row["signal"], row["signal_rank"] = classify_signal(row)
+    row["signal"], row["signal_rank"], row["signal_kind"] = classify_signal(row)
     return row
 
 
 def classify_signal(row: dict):
     """
-    סיווג מסכם. בראון חוזרת ומדגישה שאיתות אחד לעולם אינו מספיק, ולכן
-    הסיווג כאן דורש צירוף של משטר, מיקום בתעלה וכיוון המומנטום.
+    סיווג מסכם, ומחזיר גם את סוג הפעולה: כניסה, החזקה או יציאה.
+
+    הכיוון תמיד לונג. סינון גראהם מאתר חברות זולות ויציבות, וממנו אי אפשר
+    לגזור מועמדות לשורט, ולכן איתותי היציאה כאן מיועדים למי שכבר מחזיק
+    ולא לפתיחת פוזיציה הפוכה.
+
+    בראון חוזרת ומדגישה שאיתות אחד לעולם אינו מספיק, ולכן כל סיווג כאן דורש
+    צירוף של משטר, מיקום בתעלה וכיוון המומנטום.
     """
     regime = row.get("regime_key")
     zone = row.get("rsi_zone", "")
     deriv_up = row.get("deriv_dir") == "עולה"
-    has_pos = row.get("pos_rev_target") != ""
-    recent_pos = has_pos and isinstance(row.get("pos_rev_bars_ago"), int) \
+    recent_pos = row.get("pos_rev_target") != "" \
+        and isinstance(row.get("pos_rev_bars_ago"), int) \
         and row["pos_rev_bars_ago"] <= 60
+    fresh_neg = row.get("neg_rev_target") != "" \
+        and isinstance(row.get("neg_rev_bars_ago"), int) \
+        and row["neg_rev_bars_ago"] <= 30
 
     try:
         rsi_now = float(row.get("rsi"))
@@ -468,27 +580,31 @@ def classify_signal(row: dict):
     at_support = (regime == "bull" and not broke_channel
                   and zone in ("על התמיכה", "מתחת לתמיכה"))
 
-    if at_support and deriv_up:
-        return "אזור כניסה", 1
-    if regime == "bull" and not broke_channel and recent_pos and deriv_up:
-        return "היפוך חיובי טרי", 2
-    if row.get("regime_shift") == "מעבר לשוק שורי":
-        return "מעבר משטר", 3
-    if at_support:
-        return "בתמיכה, ממתין למומנטום", 4
-    if regime == "bull" and zone == "אמצע התעלה":
-        return "מגמה תקינה", 5
-    if regime == "bull" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "מתוח", 6
+    # אזהרות קודמות להזדמנויות: היפוך שלילי טרי סותר כל איתות כניסה.
+    if regime in ("bull", "transition") and fresh_neg:
+        return "איתות יציאה", 6, "יציאה"
     if broke_channel:
-        return "שבר את תעלת השורי", 7
+        return "שבר את תעלת השורי", 8, "יציאה"
+
+    if at_support and deriv_up:
+        return "אזור כניסה", 1, "כניסה"
+    if regime == "bull" and recent_pos and deriv_up:
+        return "היפוך חיובי טרי", 2, "כניסה"
+    if row.get("regime_shift") == "מעבר לשוק שורי":
+        return "מעבר משטר", 3, "כניסה"
+    if at_support:
+        return "בתמיכה, ממתין למומנטום", 4, "החזקה"
+    if regime == "bull" and zone == "אמצע התעלה":
+        return "מגמה תקינה", 5, "החזקה"
+    if regime == "bull" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
+        return "מתוח", 7, "יציאה"
     if regime == "transition":
-        return "מעבר, לא ברור", 8
+        return "מעבר, לא ברור", 9, "המתנה"
     if regime == "bear" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "ריבאונד בשוק דובי", 9
+        return "ריבאונד בשוק דובי", 10, "המתנה"
     if regime == "bear":
-        return "מגמה שלילית", 10
-    return "", 11
+        return "מגמה שלילית", 11, "המתנה"
+    return "", 12, "המתנה"
 
 
 # ---------------------------------------------------------------------------
@@ -559,12 +675,11 @@ def main():
     for i, (_, src) in enumerate(base.iterrows(), start=1):
         ticker = str(src["ticker"]).strip().upper()
         try:
-            hist = yf.Ticker(ticker).history(period="2y", interval="1d",
+            hist = yf.Ticker(ticker).history(period=HISTORY_PERIOD, interval="1d",
                                              auto_adjust=False)
             if hist is None or hist.empty or len(hist) < 220:
                 print(f"[{i}/{total}] {ticker}: אין מספיק היסטוריה")
                 continue
-            hist = hist.tail(LOOKBACK_DAYS + 200)
             row = summarize(ticker, hist)
         except Exception as exc:  # noqa: BLE001
             print(f"[{i}/{total}] {ticker}: שגיאה — {exc}")

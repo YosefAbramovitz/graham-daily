@@ -17,6 +17,7 @@ SIGNAL_CLASS = {
     "בתמיכה, ממתין למומנטום": "warm",
     "מגמה תקינה": "neutral",
     "מתוח": "warm",
+    "איתות יציאה": "bad",
     "שבר את תעלת השורי": "bad",
     "מעבר, לא ברור": "neutral",
     "ריבאונד בשוק דובי": "bad",
@@ -44,6 +45,29 @@ BOOK_NOTES = [
      "ומההפרש מול ממוצע פשוט של 9 מתקבלת היסטוגרמה. כיוון עולה עם ערך שלילי הוא "
      "התאוששות מוקדמת, כיוון יורד עם ערך חיובי הוא היחלשות. בראון מזהירה שהנוסחה "
      "מיועדת למניות ולמדדי מניות ואין להשתמש בה על אג\"ח."),
+    ("כיוון: למה הכל לונג",
+     "סינון גראהם מאתר חברות זולות ויציבות פיננסית, ומרשימה כזו אי אפשר לגזור "
+     "מועמדות לשורט — שורט דורש את ההפך, חברה יקרה ומתדרדרת. לכן כל איתות כניסה "
+     "כאן הוא לונג. איתותי היציאה מיועדים למי שכבר מחזיק במניה, ולא לפתיחת "
+     "פוזיציה הפוכה."),
+    ("אופק הזמן: מאיפה המספר",
+     "לכל מניה נסרקות שש שנות מסחר אחורה, מאותרות בה כל תבניות ה-Positive Reversal "
+     "הקודמות, ונבדק לגבי כל אחת אם המחיר אכן הגיע ליעד שהנוסחה חישבה ותוך כמה "
+     "ימי מסחר. ההנחה היא שהעסקה נפתחת רק חמישה נרות אחרי השפל, כי רק אז אפשר "
+     "לדעת שהיה שם שפל. המספר המוצג הוא החציון של המקרים שהגיעו ליעד, לצד כמה "
+     "מתוך כמה הגיעו. זו סטטיסטיקה לאחור על המניה עצמה, לא תחזית, ומדגם קטן "
+     "מדי מסומן ככזה."),
+    ("האופק הערכי נפרד לגמרי",
+     "מרווח הביטחון של גראהם, המוצג בעמודה הימנית, נסגר בדרך כלל על פני שנה עד "
+     "שלוש ולא על פני שבועות. אופק הזמן הטכני עונה על השאלה מתי להיכנס ומתי "
+     "התבנית מיצתה את עצמה, לא על השאלה כמה זמן להחזיק את ההשקעה."),
+    ("סטופ, יחס סיכון וגודל פוזיציה",
+     "הסטופ אינו אחוז שרירותי אלא הרמה שבה התבנית מתבטלת: השפל הנמוך ביותר מאז "
+     "הציר שיצר את האיתות, פחות חצי ATR כמרווח רעש. יחס הסיכון לתשואה הוא המרחק "
+     "ליעד חלקי המרחק לסטופ, ומתחת ל-1 האיתות אינו משתלם גם אם הוא נכון. גודל "
+     "הפוזיציה מחושב בדפדפן שלך מהמספרים שתזין ואינו נשמר בשום מקום. סטופ צמוד "
+     "מייצר כמות עצומה, ולכן יש תקרת ריכוזיות של 20 אחוז מהתיק למניה בודדת, "
+     "והדף מסמן מתי היא נכנסה לפעולה."),
     ("אזהרה שחוזרת לאורך כל הספר",
      "בראון חוזרת ומדגישה שאף אחד מהאיתותים האלה אינו איתות מסחר בפני עצמו. היא כותבת "
      "במפורש שלקנות או למכור על סמך דפוס אחד בלבד הוא מתכון להפסד, ושכל איתות חייב "
@@ -87,7 +111,7 @@ body{
   font-family:"IBM Plex Sans Hebrew",system-ui,sans-serif; font-size:15px; line-height:1.6;
   -webkit-font-smoothing:antialiased;
 }
-.wrap{max-width:1320px; margin:0 auto; padding:32px 16px 72px}
+.wrap{max-width:1560px; margin:0 auto; padding:32px 16px 72px}
 header{margin-bottom:28px}
 .eyebrow{font-size:12px; letter-spacing:.09em; text-transform:uppercase; color:var(--accent); font-weight:600}
 h1{font-family:"Frank Ruhl Libre",Georgia,serif; font-size:clamp(28px,4.4vw,40px); margin:6px 0 8px; font-weight:700}
@@ -112,12 +136,21 @@ input[type=search],select{
   font:inherit; color:var(--ink); background:var(--paper); border:1px solid var(--line);
   border-radius:10px; padding:9px 13px; min-width:190px;
 }
-input[type=search]:focus,select:focus{outline:2px solid var(--accent); outline-offset:1px}
+input[type=search]:focus,select:focus,input[type=number]:focus{outline:2px solid var(--accent); outline-offset:1px}
+.calc{gap:14px; align-items:center}
+.calc .calclabel{font-weight:600}
+.calc label{font-size:13px; color:var(--muted); display:inline-flex; align-items:center; gap:7px}
+.calc input[type=number]{font:inherit; color:var(--ink); background:var(--paper); border:1px solid var(--line);
+  border-radius:10px; padding:7px 11px; width:118px; direction:ltr; text-align:left;
+  font-family:"IBM Plex Mono",monospace; font-size:13.5px}
+.calc .calcnote{font-size:12px; color:var(--muted)}
 .tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
-table{border-collapse:collapse; width:100%; min-width:1120px}
+table{border-collapse:collapse; width:100%; min-width:1460px}
 th,td{padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; vertical-align:top}
 th{position:sticky; top:0; background:var(--paper); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; z-index:1}
 th:hover{color:var(--accent)}
+th.nosort{cursor:default}
+th.nosort:hover{color:var(--muted)}
 th .arrow{font-size:9px; opacity:.55}
 tbody tr:hover{background:color-mix(in srgb,var(--accent) 6%,transparent)}
 td.name{white-space:normal; direction:ltr; unicode-bidi:isolate; text-align:right; min-width:170px}
@@ -162,6 +195,12 @@ footer a{color:var(--accent)}
 
 <div class="toolbar">
   <input type="search" id="q" placeholder="חיפוש לפי שם או סימול" autocomplete="off">
+  <select id="kind">
+    <option value="">הכל</option>
+    <option value="כניסה">רק כניסות</option>
+    <option value="החזקה">רק החזקות</option>
+    <option value="יציאה">רק איתותי יציאה</option>
+  </select>
   <select id="sig"><option value="">כל האיתותים</option>__SIG_OPTS__</select>
   <select id="reg">
     <option value="">כל המשטרים</option>
@@ -171,19 +210,28 @@ footer a{color:var(--accent)}
   </select>
 </div>
 
+<div class="toolbar calc">
+  <span class="calclabel">גודל פוזיציה:</span>
+  <label>תיק בדולרים <input type="number" id="port" value="100000" min="0" step="1000"></label>
+  <label>סיכון לעסקה באחוזים <input type="number" id="risk" value="1" min="0.1" max="10" step="0.1"></label>
+  <span class="calcnote">מחושב בדפדפן שלך בלבד ואינו נשמר בשום שרת</span>
+</div>
+
 <div class="tablewrap">
   <table id="t">
     <thead><tr>
       <th data-k="signal_rank">איתות <span class="arrow">▲</span></th>
+      <th data-k="horizon_weeks">כיוון ואופק <span class="arrow"></span></th>
       <th data-k="ticker">סימול <span class="arrow"></span></th>
       <th data-k="name">שם <span class="arrow"></span></th>
       <th data-k="price">מחיר <span class="arrow"></span></th>
       <th data-k="rsi">RSI ומיקום בתעלה <span class="arrow"></span></th>
+      <th data-k="pos_rev_upside_pct">יעד <span class="arrow"></span></th>
+      <th data-k="stop_pct">סטופ <span class="arrow"></span></th>
+      <th data-k="risk_reward">סיכון / תשואה <span class="arrow"></span></th>
+      <th class="nosort">כמות</th>
       <th data-k="deriv_osc">אוסילטור נגזר <span class="arrow"></span></th>
-      <th data-k="pos_rev_upside_pct">יעד היפוך חיובי <span class="arrow"></span></th>
-      <th data-k="dist_sma200_pct">מול ממוצע 200 <span class="arrow"></span></th>
-      <th data-k="adx">ADX <span class="arrow"></span></th>
-      <th data-k="atr_pct">ATR <span class="arrow"></span></th>
+      <th data-k="dist_sma200_pct">מגמה <span class="arrow"></span></th>
       <th data-k="margin_of_safety">גראהם <span class="arrow"></span></th>
     </tr></thead>
     <tbody id="tb"></tbody>
@@ -241,6 +289,63 @@ function targetCell(r){
     <span class="sm ltr">${up>0?"+":""}${up.toFixed(1)}%</span>${age}</td>`;
 }
 
+const MAX_POSITION_PCT = 20;   // תקרת ריכוזיות למניה בודדת
+const KINDCLASS = {"כניסה":"good","החזקה":"neutral","יציאה":"bad","המתנה":"neutral"};
+
+function kindCell(r){
+  const kind = r.signal_kind || "";
+  const w = num(r.horizon_weeks), n = num(r.hist_patterns), h = num(r.hist_hits);
+  let horizon;
+  if (w !== null && n !== null && n >= 4) {
+    horizon = `<span class="sm">חציון ${w} שבועות</span>
+               <span class="sm">${h} מתוך ${n} הגיעו ליעד</span>`;
+  } else if (n !== null && n > 0) {
+    horizon = `<span class="sm">מדגם קטן (${n} תבניות)</span>`;
+  } else {
+    horizon = `<span class="sm">אין תבניות קודמות</span>`;
+  }
+  return `<td><span class="tag t-${KINDCLASS[kind]||'neutral'}">${esc(r.direction||"לונג")} · ${esc(kind)}</span>${horizon}</td>`;
+}
+
+function stopCell(r){
+  const sp = num(r.stop_price), pc = num(r.stop_pct);
+  if (sp === null) return `<td class="num">—</td>`;
+  return `<td class="num"><span class="down">${sp.toFixed(2)}</span>
+    <span class="sm ltr">${pc === null ? "" : pc.toFixed(1) + "%"}</span></td>`;
+}
+
+function rrCell(r){
+  const v = num(r.risk_reward);
+  if (v === null) return `<td class="num">—</td>`;
+  const cls = v >= 2 ? "up" : (v >= 1 ? "" : "down");
+  const note = v < 1 ? `<span class="sm">לא משתלם</span>` : "";
+  return `<td class="num"><span class="${cls}">${v.toFixed(2)}</span>${note}</td>`;
+}
+
+function sizeCell(r){
+  const price = num(r.price), stop = num(r.stop_price);
+  const port = num(document.getElementById("port").value);
+  const riskPct = num(document.getElementById("risk").value);
+  if (price === null || stop === null || stop >= price || !port || !riskPct)
+    return `<td class="num">—</td>`;
+  const perShare = price - stop;
+  let shares = Math.floor((port * riskPct / 100) / perShare);
+  if (shares < 1) return `<td class="num">—<span class="sm">הסיכון למניה גדול מדי</span></td>`;
+
+  // סטופ צמוד מייצר כמות עצומה. תקרת ריכוזיות מונעת חצי תיק במניה אחת.
+  const capped = Math.floor((port * MAX_POSITION_PCT / 100) / price);
+  const hitCap = capped < shares;
+  if (hitCap) shares = capped;
+  if (shares < 1) return `<td class="num">—<span class="sm">מעבר לתקרת הריכוזיות</span></td>`;
+
+  const exposure = shares * price;
+  const note = hitCap
+    ? `<span class="sm">הוגבל לתקרת ${MAX_POSITION_PCT}%</span>`
+    : `<span class="sm ltr">${(100 * exposure / port).toFixed(0)}% of port</span>`;
+  return `<td class="num">${shares}
+    <span class="sm ltr">$${Math.round(exposure).toLocaleString("en-US")}</span>${note}</td>`;
+}
+
 function grahamCell(r){
   const mos = num(r.margin_of_safety);
   const f = r.fscore === "" ? "" : `<span class="sm ltr">F ${r.fscore}/9</span>`;
@@ -252,10 +357,12 @@ function render(){
   const q = document.getElementById("q").value.trim().toLowerCase();
   const sf = document.getElementById("sig").value;
   const rf = document.getElementById("reg").value;
+  const kf = document.getElementById("kind").value;
 
   let rows = DATA.filter(r => {
     if (sf && r.signal !== sf) return false;
     if (rf && r.regime !== rf) return false;
+    if (kf && r.signal_kind !== kf) return false;
     if (q && !((r.ticker||"").toLowerCase().includes(q) || (r.name||"").toLowerCase().includes(q))) return false;
     return true;
   });
@@ -275,16 +382,19 @@ function render(){
     const d200 = num(r.dist_sma200_pct);
     return `<tr>
       <td><span class="tag t-${cls}">${esc(r.signal)}</span></td>
+      ${kindCell(r)}
       <td class="tk">${esc(r.ticker)}</td>
       <td class="name">${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
       <td class="num">${num(r.price)?.toFixed(2) ?? "—"}</td>
       ${rsiCell(r)}
-      ${derivCell(r)}
       ${targetCell(r)}
+      ${stopCell(r)}
+      ${rrCell(r)}
+      ${sizeCell(r)}
+      ${derivCell(r)}
       <td class="num"><span class="${d200>=0?'up':'down'}">${d200===null?"—":(d200>0?"+":"")+d200.toFixed(1)+"%"}</span>
-        <span class="sm ltr">SMA ${num(r.sma200)?.toFixed(2) ?? "—"}</span></td>
-      <td class="num">${num(r.adx)?.toFixed(1) ?? "—"}</td>
-      <td class="num">${num(r.atr_pct)?.toFixed(2) ?? "—"}%</td>
+        <span class="sm ltr">ADX ${num(r.adx)?.toFixed(1) ?? "—"}</span>
+        <span class="sm ltr">ATR ${num(r.atr_pct)?.toFixed(2) ?? "—"}%</span></td>
       ${grahamCell(r)}
     </tr>`;
   }).join("");
@@ -302,8 +412,23 @@ document.querySelectorAll("th[data-k]").forEach(th => {
     render();
   });
 });
-["q","sig","reg"].forEach(id => document.getElementById(id)
-  .addEventListener("input", render));
+["q","sig","reg","kind","port","risk"].forEach(id => document.getElementById(id)
+  .addEventListener("input", () => { saveCalc(); render(); }));
+
+// נוחות לגולש בלבד: המספרים נשמרים בדפדפן שלו ולא עוזבים אותו.
+function saveCalc(){
+  try {
+    localStorage.setItem("graham_calc",
+      JSON.stringify({p: document.getElementById("port").value,
+                      r: document.getElementById("risk").value}));
+  } catch (e) {}
+}
+try {
+  const saved = JSON.parse(localStorage.getItem("graham_calc") || "null");
+  if (saved && saved.p) document.getElementById("port").value = saved.p;
+  if (saved && saved.r) document.getElementById("risk").value = saved.r;
+} catch (e) {}
+
 render();
 </script>
 </body>
@@ -330,16 +455,29 @@ def main():
         counts[r.get("signal", "")] = counts.get(r.get("signal", ""), 0) + 1
 
     order = ["אזור כניסה", "היפוך חיובי טרי", "מעבר משטר", "בתמיכה, ממתין למומנטום",
-             "מגמה תקינה", "מתוח", "שבר את תעלת השורי", "מעבר, לא ברור",
-             "ריבאונד בשוק דובי", "מגמה שלילית"]
+             "מגמה תקינה", "איתות יציאה", "מתוח", "שבר את תעלת השורי",
+             "מעבר, לא ברור", "ריבאונד בשוק דובי", "מגמה שלילית"]
     present = [s for s in order if counts.get(s)]
 
+    kinds = {}
+    for r in rows:
+        kinds[r.get("signal_kind", "")] = kinds.get(r.get("signal_kind", ""), 0) + 1
     bulls = sum(1 for r in rows if r.get("regime") == "שורי")
-    with_target = sum(1 for r in rows if str(r.get("pos_rev_target", "")) != "")
 
-    stats = [("מניות בבדיקה", total), ("במשטר שורי", bulls),
-             ("עם יעד היפוך חיובי", with_target)]
-    for s in present[:3]:
+    def _rr(r):
+        try:
+            return float(r.get("risk_reward"))
+        except (TypeError, ValueError):
+            return None
+    worthwhile = sum(1 for r in rows
+                     if r.get("signal_kind") == "כניסה" and (_rr(r) or 0) >= 2)
+
+    stats = [("מניות בבדיקה", total),
+             ("איתותי כניסה", kinds.get("כניסה", 0)),
+             ("מהם עם יחס 2 ומעלה", worthwhile),
+             ("איתותי יציאה", kinds.get("יציאה", 0)),
+             ("במשטר שורי", bulls)]
+    for s in present[:2]:
         stats.append((s, counts[s]))
     stats_html = "".join(
         f'<div class="stat"><span class="n">{v}</span><span class="l">{html.escape(k)}</span></div>'
