@@ -60,6 +60,19 @@ MAX_PIVOT_SPAN = 250
 MAX_TARGET_MOVE = 0.60
 
 
+def _clean(value):
+    """
+    ערך מתא ריק ב-CSV חוזר מ-pandas כ-NaN, ו-str(NaN) הוא "nan" — מחרוזת
+    שנראית מלאה. כל ערך שמגיע מהקובץ עובר דרך כאן לפני שנבדק.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    text = str(value).strip()
+    return "" if text.lower() in ("nan", "none", "<na>") else value
+
+
 def _plausible_target(target: float, price: float) -> bool:
     if not price or target <= 0:
         return False
@@ -575,7 +588,7 @@ def classify_signal(row: dict):
 
     # דגל אדום משלב האיכות גובר על הכל. גריי וקרלייל מדגישים שסדר הפעולות
     # הוא העיקר: קודם פוסלים, ורק אחר כך מדרגים ומתזמנים.
-    red = str(row.get("red_flag", "") or "").strip()
+    red = str(_clean(row.get("red_flag", ""))).strip()
     if red:
         return f"נפסל במבחן {red}", 6, "פסילה"
 
@@ -699,20 +712,20 @@ def main():
             print(f"[{i}/{total}] {ticker}: שגיאה — {exc}")
             continue
 
-        row["name"] = src.get("name", "")
-        row["sector"] = src.get("sector", "")
-        row["graham_mode"] = src.get("graham_mode", "")
-        row["graham_score"] = src.get("score", "")
-        row["graham_max"] = src.get("max_score", "")
-        row["fscore"] = src.get("fscore", "")
-        row["margin_of_safety"] = src.get("margin_of_safety", "")
-        row["graham_number"] = src.get("graham_number", "")
+        row["name"] = _clean(src.get("name", ""))
+        row["sector"] = _clean(src.get("sector", ""))
+        row["graham_mode"] = _clean(src.get("graham_mode", ""))
+        row["graham_score"] = _clean(src.get("score", ""))
+        row["graham_max"] = _clean(src.get("max_score", ""))
+        row["fscore"] = _clean(src.get("fscore", ""))
+        row["margin_of_safety"] = _clean(src.get("margin_of_safety", ""))
+        row["graham_number"] = _clean(src.get("graham_number", ""))
 
         # שדות שלב האיכות, אם הקלט הגיע ממנו
         for field in ("quality_score", "beneish_m", "beneish_flag", "altman_z",
                       "altman_flag", "ebit_ev", "gross_profitability",
                       "momentum_12_1", "net_payout_yield", "red_flag"):
-            row[field] = src.get(field, "")
+            row[field] = _clean(src.get(field, ""))
 
         # הסיווג נקבע מחדש אחרי המיזוג, כדי שדגל אדום יוכל לפסול איתות כניסה
         row["signal"], row["signal_rank"], row["signal_kind"] = classify_signal(row)
