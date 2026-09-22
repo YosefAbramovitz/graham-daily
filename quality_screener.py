@@ -250,47 +250,8 @@ def net_payout_yield(cf, market_cap):
 # ---------------------------------------------------------------------------
 # מניה בודדת
 # ---------------------------------------------------------------------------
-def analyse(ticker: str, company_type: str) -> dict:
-    tk = yf.Ticker(ticker)
-    bs = getattr(tk, "balance_sheet", None)
-    inc = getattr(tk, "income_stmt", None)
-    cf = getattr(tk, "cashflow", None)
-
-    try:
-        info = tk.info or {}
-    except Exception:  # noqa: BLE001
-        info = {}
-    market_cap = info.get("marketCap")
-    ev = info.get("enterpriseValue")
-
-    out = {"ticker": ticker}
-
-    m, parts = beneish_m_score(bs, inc, cf)
-    out["beneish_m"] = round(m, 2) if m is not None else ""
-    if m is None:
-        out["beneish_flag"] = "אין נתונים"
-    elif m > BENEISH_MANIPULATOR:
-        out["beneish_flag"] = "חשד למניפולציה"
-    elif m > BENEISH_GREY:
-        out["beneish_flag"] = "אזור אפור"
-    else:
-        out["beneish_flag"] = "תקין"
-
-    if company_type == "financial":
-        out["altman_z"] = ""
-        out["altman_flag"] = "לא רלוונטי"
-    else:
-        z = altman_z_score(bs, inc, market_cap)
-        out["altman_z"] = round(z, 2) if z is not None else ""
-        if z is None:
-            out["altman_flag"] = "אין נתונים"
-        elif z < ALTMAN_DISTRESS:
-            out["altman_flag"] = "סיכון חדלות פירעון"
-        elif z < ALTMAN_SAFE:
-            out["altman_flag"] = "אזור אפור"
-        else:
-            out["altman_flag"] = "תקין"
-
+def _rank_metrics(out: dict, tk, bs, inc, cf, market_cap, ev) -> dict:
+    """מדדי הדירוג בלבד. משותף לחברות תפעוליות ולפיננסיות."""
     ebit = pick(inc, EBIT_ROWS)
     out["ebit_ev"] = round(ebit / ev, 4) if (ebit and ev and ev > 0) else ""
 
@@ -306,6 +267,69 @@ def analyse(ticker: str, company_type: str) -> dict:
 
     npy = net_payout_yield(cf, market_cap)
     out["net_payout_yield"] = round(npy, 4) if npy is not None else ""
+    return out
+
+
+def _finish_financial(out, tk, inc, cf, market_cap, ev, bs):
+    out = _rank_metrics(out, tk, bs, inc, cf, market_cap, ev)
+    out["red_flag"] = ""      # אין מבחן פסילה שחל על חברה פיננסית
+    return out
+
+
+def analyse(ticker: str, company_type: str) -> dict:
+    tk = yf.Ticker(ticker)
+    bs = getattr(tk, "balance_sheet", None)
+    inc = getattr(tk, "income_stmt", None)
+    cf = getattr(tk, "cashflow", None)
+
+    try:
+        info = tk.info or {}
+    except Exception:  # noqa: BLE001
+        info = {}
+    market_cap = info.get("marketCap")
+    ev = info.get("enterpriseValue")
+
+    # כשהקלט הוא ריצת בדיקה בלי עמודת סוג החברה, הסוג נגזר מהסקטור.
+    if not company_type:
+        sector = str(info.get("sector") or "")
+        company_type = "financial" if sector in ("Financial Services", "Real Estate") else "industrial"
+
+    out = {"ticker": ticker, "company_type": company_type}
+
+    # שני המודלים בנויים על מבנה דוחות של חברה תפעולית: מרווח גולמי, חייבים
+    # מול מכירות, ונכסים שוטפים מול התחייבויות שוטפות. לבנקים ולחברות ביטוח
+    # אין מהם כמעט דבר, ולכן הציון אינו מחושב להם — לא מפני שחסרים נתונים
+    # אלא מפני שהמודל אינו חל עליהן.
+    if company_type == "financial":
+        out["beneish_m"] = ""
+        out["beneish_flag"] = "לא רלוונטי"
+        out["altman_z"] = ""
+        out["altman_flag"] = "לא רלוונטי"
+        return _finish_financial(out, tk, inc, cf, market_cap, ev, bs)
+
+    m, parts = beneish_m_score(bs, inc, cf)
+    out["beneish_m"] = round(m, 2) if m is not None else ""
+    if m is None:
+        out["beneish_flag"] = "אין נתונים"
+    elif m > BENEISH_MANIPULATOR:
+        out["beneish_flag"] = "חשד למניפולציה"
+    elif m > BENEISH_GREY:
+        out["beneish_flag"] = "אזור אפור"
+    else:
+        out["beneish_flag"] = "תקין"
+
+    z = altman_z_score(bs, inc, market_cap)
+    out["altman_z"] = round(z, 2) if z is not None else ""
+    if z is None:
+        out["altman_flag"] = "אין נתונים"
+    elif z < ALTMAN_DISTRESS:
+        out["altman_flag"] = "סיכון חדלות פירעון"
+    elif z < ALTMAN_SAFE:
+        out["altman_flag"] = "אזור אפור"
+    else:
+        out["altman_flag"] = "תקין"
+
+    out = _rank_metrics(out, tk, bs, inc, cf, market_cap, ev)
 
     flags = []
     if out["beneish_flag"] == "חשד למניפולציה":
