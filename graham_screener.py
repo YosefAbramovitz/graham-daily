@@ -77,6 +77,16 @@ MAX_PB_DEFENSIVE = 1.5
 MAX_PE_TIMES_PB = 22.5                   # כלל האצבע המשולב של גראהם
 MAX_PRICE_TO_NET_TANGIBLE_ENTERPRISING = 1.20  # 120% מהנכסים המוחשיים
 
+# --- ספי המסך המודרני ---
+# שלושת הקריטריונים המאזניים של גראהם (מכפיל הון, כלל 22.5, ומספר גראהם
+# שנגזר מהם) הוחלפו במדדים שאינם מניחים שהמאזן משקף את העסק. הרקע:
+# חלק גדול מהערך התאגידי היום יושב בתוכנה, במחקר ובמותג, שאינם רשומים
+# כנכסים. ראו Mauboussin, "Intangibles and Modern Value Investing" (2025).
+MIN_EBIT_EV = 0.10            # רווח תפעולי של 10% משווי הפעילות, כלומר EV/EBIT עד 10
+MIN_GROSS_PROFITABILITY = 0.20  # רווח גולמי של 20% מסך הנכסים (Novy-Marx 2013)
+MIN_NET_PAYOUT_YIELD = 0.02   # החזר הון של 2%, מחליף את מבחן 20 שנות הדיבידנד
+MAX_NET_DEBT_TO_EBITDA = 3.0  # מחליף את היחס השוטף כמבחן איתנות
+
 # רשימת גיבוי אם אי אפשר למשוך את רשימת ה-S&P 500 מוויקיפדיה (למשל: אין רשת)
 FALLBACK_LARGE_CAPS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "KO", "PEP", "JNJ", "PG", "XOM", "CVX",
@@ -117,6 +127,15 @@ class ScreenResult:
     score_ent: int = 0
     max_score_ent: int = 0
 
+    # --- המסך המודרני: מדדים שאינם תלויים במאזן ---
+    enterprise_value: Optional[float] = None
+    ebit: Optional[float] = None
+    ebit_ev: Optional[float] = None              # תשואת הרווח התפעולי על שווי הפעילות
+    gross_profitability: Optional[float] = None  # רווח גולמי חלקי סך הנכסים (Novy-Marx)
+    net_payout_yield: Optional[float] = None     # דיבידנד ורכישות עצמיות, חלקי שווי השוק
+    net_debt_to_ebitda: Optional[float] = None
+    measurable: bool = True                      # האם המסך בכלל חל על החברה
+
     def as_row(self) -> dict:
         row = {
             "ticker": self.ticker,
@@ -145,6 +164,13 @@ class ScreenResult:
         }
         row["score_ent"] = self.score_ent
         row["max_score_ent"] = self.max_score_ent
+        row["enterprise_value"] = self.enterprise_value
+        row["ebit"] = self.ebit
+        row["ebit_ev"] = self.ebit_ev
+        row["gross_profitability"] = self.gross_profitability
+        row["net_payout_yield"] = self.net_payout_yield
+        row["net_debt_to_ebitda"] = self.net_debt_to_ebitda
+        row["measurable"] = self.measurable
         row.update({f"crit_{k}": v for k, v in self.checks.items()})
         row.update({f"ent_{k}": v for k, v in self.checks_ent.items()})
         row.update({f"f_{k}": v for k, v in self.fscore_checks.items()})
@@ -491,85 +517,108 @@ def screen_ticker(ticker: str, mode: str = "defensive",
             res.margin_of_safety = (res.graham_number - res.price) / res.graham_number
 
         # --- ציון פיוטרוסקי (F-Score): שיפור או הידרדרות בשנה האחרונה ---
+        cf = None
         try:
             cf = t.cashflow
             res.fscore, res.fscore_checks = piotroski_fscore(bs, fin, cf)
         except Exception:
             res.fscore, res.fscore_checks = None, {}
 
-        # ===================== קריטריונים: משקיע מגן (פרק 14) =====================
-        # שני המצבים מחושבים תמיד מאותה משיכת נתונים, כדי לא לשלם פעמיים
-        # על אותן בקשות רשת. הדגל --mode קובע רק מה מוצג כציון הראשי.
+        # --- נתוני המסך המודרני ---
+        res.enterprise_value = info.get("enterpriseValue")
+        market_cap = info.get("marketCap")
+
+        def _fin_row(names, idx=0):
+            return _series_val(fin, names, idx)
+
+        res.ebit = _fin_row(["EBIT", "Operating Income", "Total Operating Income As Reported"])
+        if res.ebit and res.enterprise_value and res.enterprise_value > 0:
+            res.ebit_ev = res.ebit / res.enterprise_value
+
+        gp = _fin_row(["Gross Profit"])
+        if gp is None:
+            rev_row = _fin_row(["Total Revenue", "Operating Revenue"])
+            cogs_row = _fin_row(["Cost Of Revenue", "Cost Of Goods Sold"])
+            gp = (rev_row - cogs_row) if (rev_row is not None and cogs_row is not None) else None
+        if gp is not None and res.total_assets:
+            res.gross_profitability = gp / res.total_assets
+
+        # החזר הון נטו: דיבידנד ורכישות עצמיות פחות הנפקות. מחליף את מבחן
+        # 20 שנות הדיבידנד, שהתיישן מפני שרכישות עצמיות החליפו את הדיבידנד
+        # כדרך העיקרית שבה חברות אמריקאיות מחזירות מזומן לבעלי המניות.
+        try:
+            cf_div = _series_val(cf, ["Cash Dividends Paid", "Common Stock Dividend Paid"]) or 0.0
+            cf_buy = _series_val(cf, ["Repurchase Of Capital Stock", "Repurchase Of Common Stock"]) or 0.0
+            cf_iss = _series_val(cf, ["Issuance Of Capital Stock", "Common Stock Issuance"]) or 0.0
+            if market_cap:
+                returned = abs(cf_div) + abs(min(cf_buy, 0.0)) - max(cf_iss, 0.0)
+                res.net_payout_yield = returned / market_cap
+        except Exception:
+            pass
+
+        ebitda = info.get("ebitda")
+        cash = _series_val(bs, ["Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments"])
+        if ebitda and ebitda > 0 and res.total_debt is not None:
+            res.net_debt_to_ebitda = (res.total_debt - (cash or 0.0)) / ebitda
+
+        # ================= המסך המודרני (מחליף את פרק 14) =================
+        # שלושת המדדים המאזניים של גראהם הוחלפו. הפילוסופיה נשארה: קודם
+        # בטיחות, אחר כך זול. רק כלי המדידה השתנו, מפני שמכפיל ההון מניח
+        # שהמאזן משקף את העסק - הנחה שנשברת בחברות שהערך שלהן בתוכנה,
+        # במחקר ובמותג.
+        #
+        # חברה שלא ניתן לחשב עבורה את המדדים האלה אינה מקבלת פטור אלא
+        # נכשלת, ומסומנת כלא-ניתנת-למדידה. זו בחירה מודעת: המסך הזה מודד
+        # עסקים תפעוליים, ובנקים וחברות ביטוח אינם כאלה. עדיף להצהיר על כך
+        # מאשר לדרג אותם על סמך חלק מהמבחנים ולהעמיד פנים שזו אותה אמת מידה.
         if True:
             checks = {}
 
-            # 1. גודל מספיק - מכירות לחברת תעשייה, סך נכסים לתשתית ולפיננסים
+            # 1. גודל מספיק - ללא שינוי
             if is_utility or is_financial:
                 checks["1_adequate_size"] = bool(res.total_assets and res.total_assets >= min_assets_utility)
             else:
                 checks["1_adequate_size"] = bool(res.revenue and res.revenue >= min_revenue)
 
-            # 2. מצב פיננסי איתן - המבחן משתנה לפי סוג החברה
-            if is_financial:
-                # למאזן של בנק, מבטח או ריט אין חלוקה משמעותית בין נכסים שוטפים
-                # להתחייבויות שוטפות. גראהם לא החיל את המבחן הזה על חברות כאלה,
-                # ולכן הוא מסומן כלא-רלוונטי ולא נספר לרעתן.
-                checks["2_strong_financial_condition"] = None
-                res.na_criteria.append("2_strong_financial_condition")
-            elif is_utility:
-                # לחברות תשתית גראהם החליף את היחס השוטף במבחן חוב מול הון עצמי
-                equity = _series_val(bs, ["Stockholders Equity", "Total Stockholder Equity",
-                                          "Common Stock Equity"])
-                if res.total_debt is not None and equity:
-                    checks["2_strong_financial_condition"] = res.total_debt <= 2.0 * equity
-                else:
-                    checks["2_strong_financial_condition"] = False
-            else:
-                cond_ratio = bool(res.current_ratio and res.current_ratio >= MIN_CURRENT_RATIO)
-                cond_debt = True
-                if res.total_debt is not None and res.net_current_assets is not None:
-                    cond_debt = res.total_debt <= max(res.net_current_assets, 0) * 1.0 if res.net_current_assets > 0 else False
-                checks["2_strong_financial_condition"] = cond_ratio and cond_debt
-
-            # 3. יציבות רווחים: אין הפסד באף אחת מהשנים שיש עליהן נתונים
+            # 2. יציבות רווחים - ללא שינוי. אין הפסד באף שנה שיש עליה נתונים.
             if eps_by_year:
-                checks["3_earnings_stability"] = all(v > 0 for v in eps_by_year.values())
+                checks["2_earnings_stability"] = all(v > 0 for v in eps_by_year.values())
             else:
-                checks["3_earnings_stability"] = False
+                checks["2_earnings_stability"] = False
 
-            # 4. היסטוריית דיבידנד: >= 20 שנה רצופות (או כל מה שיש, בסימון ברור)
-            checks["4_dividend_record_20y"] = bool(
-                res.dividend_years_streak and res.dividend_years_streak >= MAX_DIVIDEND_GAP_YEARS_DEFENSIVE
+            # 3. איתנות פיננסית - חוב נטו מול EBITDA, במקום היחס השוטף.
+            # היחס השוטף נזרק מפני שהוא מבוסס על חלוקת המאזן לשוטף ולא-שוטף,
+            # חלוקה שאין לה משמעות בחלק גדול מהחברות היום.
+            checks["3_financial_strength"] = bool(
+                res.net_debt_to_ebitda is not None
+                and res.net_debt_to_ebitda <= MAX_NET_DEBT_TO_EBITDA
             )
 
-            # 5. צמיחת רווחים: לפחות שליש גידול בין תחילת התקופה לסופה
-            if len(eps_by_year) >= 3:
-                years_sorted = sorted(eps_by_year.keys())
-                first_vals = [eps_by_year[y] for y in years_sorted[: max(1, len(years_sorted) // 3)]]
-                last_vals = [eps_by_year[y] for y in years_sorted[-max(1, len(years_sorted) // 3):]]
-                first_avg = sum(first_vals) / len(first_vals)
-                last_avg = sum(last_vals) / len(last_vals)
-                if first_avg > 0:
-                    res.eps_growth = (last_avg - first_avg) / first_avg
-                    checks["5_earnings_growth_33pct"] = res.eps_growth >= MIN_EPS_GROWTH_DEFENSIVE
-                else:
-                    checks["5_earnings_growth_33pct"] = False
-            else:
-                checks["5_earnings_growth_33pct"] = False
+            # 4. החזר הון לבעלי המניות - מחליף את 20 שנות הדיבידנד.
+            checks["4_returns_capital"] = bool(
+                res.net_payout_yield is not None
+                and res.net_payout_yield >= MIN_NET_PAYOUT_YIELD
+            )
 
-            # 6. יחס מחיר/רווח סביר (<=15)
-            checks["6_moderate_pe_15"] = bool(res.pe and res.pe <= MAX_PE_DEFENSIVE)
+            # 5. זול - רווח תפעולי מול שווי הפעילות. מחליף גם את מכפיל הרווח
+            # וגם את מכפיל ההון. גריי וקרלייל מצאו את היחס הזה כחזק שבמדדי
+            # הזול, והוא מודד את כל העסק כולל החוב, לא רק את ההון העצמי.
+            checks["5_cheap_ebit_ev"] = bool(res.ebit_ev is not None and res.ebit_ev >= MIN_EBIT_EV)
 
-            # 7. יחס מחיר/הון סביר (<=1.5), או PE*PB <= 22.5
-            cond_pb = bool(res.pb and res.pb <= MAX_PB_DEFENSIVE)
-            cond_combo = bool(res.pe and res.pb and (res.pe * res.pb) <= MAX_PE_TIMES_PB)
-            checks["7_moderate_pb_or_pe_x_pb"] = cond_pb or cond_combo
+            # 6. איכות - רווח גולמי חלקי סך הנכסים (Novy-Marx 2013). כוח ניבוי
+            # דומה למכפיל ההון, וכמעט בלתי מתואם איתו.
+            checks["6_gross_profitability"] = bool(
+                res.gross_profitability is not None
+                and res.gross_profitability >= MIN_GROSS_PROFITABILITY
+            )
 
             res.checks = checks
-            # קריטריון שסומן None אינו חל על סוג החברה - הוא יוצא מהמכנה
-            # ולא נספר ככישלון, כך שחברה פיננסית מדורגת מתוך 6 ולא מתוך 7.
-            res.max_score = sum(1 for v in checks.values() if v is not None)
+            res.max_score = len(checks)
             res.score = sum(1 for v in checks.values() if v is True)
+
+            # שני המבחנים שדורשים מבנה של חברה תפעולית. בלעדיהם אין למסך
+            # הזה מה לומר על החברה, וזה מסומן במפורש ולא מוסתר.
+            res.measurable = res.ebit_ev is not None and res.gross_profitability is not None
 
         # =================== קריטריונים: משקיע יוזם (פרק 15, מקוצר) ===================
         if True:

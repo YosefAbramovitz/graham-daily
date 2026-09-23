@@ -21,12 +21,11 @@ import pandas as pd
 
 CRITERIA = [
     ("crit_1_adequate_size", "גודל מספיק", "מכירות שנתיות מעל סף מינימלי (בחברת תשתית או פיננסית נבדק סך הנכסים במקום המכירות)"),
-    ("crit_2_strong_financial_condition", "מצב פיננסי איתן", "יחס שוטף של 2 לפחות, וחוב שאינו עולה על הנכסים השוטפים נטו (בחברת תשתית: חוב של עד פי 2 מההון העצמי; בחברה פיננסית המבחן אינו חל)"),
-    ("crit_3_earnings_stability", "יציבות רווחים", "רווח חיובי בכל אחת מהשנים שנבדקו"),
-    ("crit_4_dividend_record_20y", "היסטוריית דיבידנד", "תשלום דיבידנד רצוף של 20 שנה לפחות"),
-    ("crit_5_earnings_growth_33pct", "צמיחת רווחים", "גידול של לפחות שליש ברווח למניה על פני התקופה"),
-    ("crit_6_moderate_pe_15", "מכפיל רווח סביר", "מחיר חלקי רווח, עד 15"),
-    ("crit_7_moderate_pb_or_pe_x_pb", "מכפיל הון סביר", "מחיר חלקי הון, עד 1.5 - או לחלופין מכפיל רווח כפול מכפיל הון, עד 22.5"),
+    ("crit_2_earnings_stability", "יציבות רווחים", "רווח חיובי בכל אחת מהשנים שנבדקו"),
+    ("crit_3_financial_strength", "איתנות פיננסית", "חוב נטו של עד פי 3 מה-EBITDA. מחליף את היחס השוטף של גראהם, שמבוסס על חלוקת המאזן לשוטף ולא-שוטף"),
+    ("crit_4_returns_capital", "החזר הון לבעלי המניות", "דיבידנדים ורכישות עצמיות פחות הנפקות, לפחות 2 אחוז משווי השוק. מחליף את מבחן 20 שנות הדיבידנד"),
+    ("crit_5_cheap_ebit_ev", "זול לפי הרווח התפעולי", "רווח תפעולי של 10 אחוז לפחות משווי הפעילות, כלומר EV חלקי EBIT עד 10. מחליף גם את מכפיל הרווח וגם את מכפיל ההון"),
+    ("crit_6_gross_profitability", "רווחיות גולמית", "רווח גולמי של 20 אחוז לפחות מסך הנכסים - המדד של נובי-מרקס"),
 ]
 
 ENT_CRITERIA = [
@@ -39,18 +38,18 @@ ENT_CRITERIA = [
 
 MODE_META = {
     "defensive": {
-        "title": "סורק גראהם — משקיע מגן",
-        "eyebrow": "בנג'מין גראהם · המשקיע הנבון, פרק 14",
-        "sub": "שבעת הקריטריונים של גראהם למשקיע המגן, בהתאמה לסוג החברה, ולצדם ציון פיוטרוסקי ומרווח הביטחון מפרק 20.",
+        "title": "המסך המודרני",
+        "eyebrow": "גראהם, בכלי מדידה של היום",
+        "sub": "המסגרת של גראהם - קודם בטיחות, אחר כך זול - עם כלי מדידה מעודכנים. מכפיל ההון, כלל ה-22.5 ומבחן 20 שנות הדיבידנד הוחלפו במדדים שאינם מניחים שהמאזן משקף את העסק.",
         "score_col": "score", "max_col": "max_score", "criteria": None,
-        "other_href": "enterprising.html", "other_label": "למסך המשקיע היוזם (פרק 15)",
+        "other_href": "enterprising.html", "other_label": "למסך גראהם הקלאסי (פרק 15)",
     },
     "enterprising": {
         "title": "סורק גראהם — משקיע יוזם",
         "eyebrow": "בנג'מין גראהם · המשקיע הנבון, פרק 15",
-        "sub": "חמשת הקריטריונים המקוצרים של גראהם למשקיע היוזם. אין כאן דרישת גודל, ולכן המסך הזה פתוח גם לחברות בינוניות וקטנות - שם, לדברי גראהם, נמצאות המציאות.",
+        "sub": "גראהם המקורי, ללא שינוי - נשמר כנקודת ייחוס מול המסך המודרני. חמשת הקריטריונים של פרק 15. אין כאן דרישת גודל, ולכן המסך הזה פתוח גם לחברות בינוניות וקטנות - שם, לדברי גראהם, נמצאות המציאות.",
         "score_col": "score_ent", "max_col": "max_score_ent", "criteria": None,
-        "other_href": "index.html", "other_label": "למסך המשקיע המגן (פרק 14)",
+        "other_href": "index.html", "other_label": "למסך המודרני",
     },
 }
 
@@ -78,6 +77,48 @@ SECTOR_NOTE = (
     'חלוקה משמעותית בין נכסים שוטפים להתחייבויות שוטפות, ולכן מבחן היחס השוטף פשוט לא חל עליהן. '
     'בדף הזה הוא מסומן אצלן כלא-רלוונטי (נקודה אפורה) ויוצא מהמכנה, כך שחברה פיננסית מדורגת '
     'מתוך 6 ולא מתוך 7. לחברות תשתית, במקום היחס השוטף, נבדק יחס חוב להון עצמי של עד 2.</p>'
+)
+
+MEASURABLE_NOTE = (
+    '<p style="margin-top:14px"><b>מה קרה לבנקים.</b> שני המבחנים המרכזיים כאן - הרווח התפעולי '
+    'מול שווי הפעילות, והרווחיות הגולמית - דורשים מבנה דוחות של חברה תפעולית. לבנק או לחברת '
+    'ביטוח אין רווח גולמי, ולשווי הפעילות שלהם אין משמעות רגילה מפני שהפיקדונות אינם חוב '
+    'במובן הרגיל. בגרסה הקודמת הם קיבלו פטור מהמבחנים שלא חלו עליהם ודורגו מתוך 6 במקום 7, '
+    'וזה נתן להם יתרון. כאן הם אינם מקבלים פטור: חברה שאי אפשר למדוד אותה מסומנת ככזו '
+    'ואינה מקבלת ציון מלא. זו בחירה מודעת - המסך הזה מודד עסקים תפעוליים, ועדיף להצהיר '
+    'על כך מאשר לדרג בנק על סמך מחצית מהמבחנים.</p>'
+)
+
+MODERN_COLS = (
+    '<th data-k="ev">רווח תפעולי לשווי <span class="arrow"></span></th>\n'
+    '      <th data-k="gp">רווחיות גולמית <span class="arrow"></span></th>\n'
+    '      <th data-k="npy">החזר הון <span class="arrow"></span></th>\n'
+    '      <th data-k="nde">חוב נטו ל-EBITDA <span class="arrow"></span></th>\n'
+    '      <th data-k="pe">מכפיל רווח <span class="arrow"></span></th>'
+)
+CLASSIC_COLS = (
+    '<th data-k="mos">מרווח ביטחון <span class="arrow"></span></th>\n'
+    '      <th data-k="gn">מספר גראהם <span class="arrow"></span></th>\n'
+    '      <th data-k="pe">מכפיל רווח <span class="arrow"></span></th>\n'
+    '      <th data-k="pb">מכפיל הון <span class="arrow"></span></th>\n'
+    '      <th data-k="cr">יחס שוטף <span class="arrow"></span></th>\n'
+    '      <th data-k="div">שנות דיבידנד <span class="arrow"></span></th>'
+)
+
+MODERN_CELLS = (
+    '<td class="num">${pct(r.ev)}</td>'
+    '<td class="num">${pct(r.gp)}</td>'
+    '<td class="num">${pct(r.npy)}</td>'
+    '<td class="num">${num(r.nde)}</td>'
+    '<td class="num">${num(r.pe)}</td>'
+)
+CLASSIC_CELLS = (
+    '<td>${mosCell(r)}</td>'
+    '<td class="num">${num(r.gn)}</td>'
+    '<td class="num">${num(r.pe)}</td>'
+    '<td class="num">${num(r.pb)}</td>'
+    '<td class="num">${num(r.cr)}</td>'
+    '<td class="num">${intv(r.div)}</td>'
 )
 
 ISRAEL_TZ = timezone(timedelta(hours=3))
@@ -137,6 +178,11 @@ def build_rows(df, criteria, score_col, max_col):
                 "pe": None if pd.isna(r.get("P/E")) else round(float(r.get("P/E")), 2),
                 "pb": None if pd.isna(r.get("P/B")) else round(float(r.get("P/B")), 2),
                 "cr": None if pd.isna(r.get("current_ratio")) else round(float(r.get("current_ratio")), 2),
+                "ev": None if pd.isna(r.get("ebit_ev")) else round(float(r.get("ebit_ev")) * 100, 1),
+                "gp": None if pd.isna(r.get("gross_profitability")) else round(float(r.get("gross_profitability")) * 100, 1),
+                "npy": None if pd.isna(r.get("net_payout_yield")) else round(float(r.get("net_payout_yield")) * 100, 1),
+                "nde": None if pd.isna(r.get("net_debt_to_ebitda")) else round(float(r.get("net_debt_to_ebitda")), 2),
+                "meas": bool(r.get("measurable", True)) if not pd.isna(r.get("measurable", True)) else True,
                 "div": None if pd.isna(r.get("dividend_years_streak")) else int(r.get("dividend_years_streak")),
                 "rev": None if pd.isna(r.get("revenue")) else float(r.get("revenue")),
                 "checks": checks,
@@ -224,7 +270,7 @@ td.num{font-family:"IBM Plex Mono",monospace; direction:ltr; unicode-bidi:isolat
 .dots{display:inline-flex; gap:4px; direction:ltr}
 .dot{width:11px; height:11px; border-radius:50%; display:inline-block}
 .dot.y{background:var(--good-ink)} .dot.n{background:var(--bad-ink); opacity:.45} .dot.u{background:var(--unknown-ink); opacity:.3}
-footer{margin-top:34px; font-size:12.5px; color:var(--muted); line-height:1.75}
+.sm-na{display:block; font-size:11px; color:var(--bad-ink); margin-top:3px}\nfooter{margin-top:34px; font-size:12.5px; color:var(--muted); line-height:1.75}
 footer a{color:var(--accent)}
 .empty{padding:36px; text-align:center; color:var(--muted)}
 @media (max-width:640px){ .wrap{padding:22px 16px 56px} }
@@ -307,12 +353,7 @@ footer a{color:var(--accent)}
       <th data-k="score">ציון גראהם <span class="arrow">▼</span></th>
       <th data-k="checks">קריטריונים <span class="arrow"></span></th>
       <th data-k="fscore">F-Score <span class="arrow"></span></th>
-      <th data-k="mos">מרווח ביטחון <span class="arrow"></span></th>
-      <th data-k="gn">מספר גראהם <span class="arrow"></span></th>
-      <th data-k="pe">מכפיל רווח <span class="arrow"></span></th>
-      <th data-k="pb">מכפיל הון <span class="arrow"></span></th>
-      <th data-k="cr">יחס שוטף <span class="arrow"></span></th>
-      <th data-k="div">שנות דיבידנד <span class="arrow"></span></th>
+      __VALUE_COLS__
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -356,6 +397,8 @@ function fTitle(r){
   return r.fchecks.map((c,i) => `${c ? "✓" : "✗"} ${F_LABELS[i]}`).join(" · ");
 }
 
+function pct(v){ return (v === null || v === undefined) ? "—" : v.toFixed(1) + "%"; }
+
 function mosCell(r){
   if (r.mos === null) return '<span class="score s-mid" title="לא ניתן לחשב: הון עצמי או רווח שלילי">—</span>';
   const cls = r.mos >= 33 ? "s-hi" : (r.mos >= 0 ? "s-mid" : "s-lo");
@@ -398,15 +441,10 @@ function render(){
     <td class="tk">${r.ticker}</td>
     <td class="name">${r.name}</td>
     <td class="sector">${r.sector || "—"}</td>
-    <td><span class="score ${scoreClass(r.score, r.max_score)}" title="${r.ctype_label} — ${r.max_score} קריטריונים רלוונטיים">${r.score} / ${r.max_score}</span></td>
+    <td><span class="score ${scoreClass(r.score, r.max_score)}" title="${r.ctype_label} — ${r.max_score} קריטריונים">${r.score} / ${r.max_score}</span>${r.meas === false ? '<span class="sm-na">לא ניתן למדידה</span>' : ''}</td>
     <td>${dots(r.checks)}</td>
     <td><span class="score ${r.fscore === null ? 's-mid' : scoreClass(r.fscore, 9)}" title="${fTitle(r)}">${r.fscore === null ? "—" : r.fscore + " / 9"}</span></td>
-    <td>${mosCell(r)}</td>
-    <td class="num">${num(r.gn)}</td>
-    <td class="num">${num(r.pe)}</td>
-    <td class="num">${num(r.pb)}</td>
-    <td class="num">${num(r.cr)}</td>
-    <td class="num">${intv(r.div)}</td>
+    __VALUE_CELLS__
   </tr>`).join("");
 }
 
@@ -486,8 +524,10 @@ def main():
         .replace("__OTHER_HREF__", meta["other_href"])
         .replace("__OTHER_LABEL__", html.escape(meta["other_label"]))
         .replace("__CRIT_PANEL_TITLE__",
-                 "מהם שבעת הקריטריונים?" if args.mode == "defensive" else "מהם חמשת הקריטריונים?")
-        .replace("__SECTOR_NOTE__", SECTOR_NOTE if args.mode == "defensive" else "")
+                 "מה נבדק כאן, ומה השתנה מגראהם?" if args.mode == "defensive" else "מהם חמשת הקריטריונים?")
+        .replace("__SECTOR_NOTE__", MEASURABLE_NOTE if args.mode == "defensive" else SECTOR_NOTE)
+        .replace("__VALUE_COLS__", MODERN_COLS if args.mode == "defensive" else CLASSIC_COLS)
+        .replace("__VALUE_CELLS__", MODERN_CELLS if args.mode == "defensive" else CLASSIC_CELLS)
         .replace("__F_LABELS__", json.dumps([f[1] for f in FSCORE_LABELS], ensure_ascii=False))
         .replace("__FSCORE_LIST__", fscore_html)
         .replace("__UPDATED__", updated)

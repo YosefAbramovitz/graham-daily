@@ -12,84 +12,48 @@ import pandas as pd
 
 SIGNAL_CLASS = {
     "אזור כניסה": "good",
-    "היפוך חיובי טרי": "good",
-    "מעבר משטר": "good",
-    "בתמיכה, ממתין למומנטום": "warm",
     "מגמה תקינה": "neutral",
-    "מתוח": "warm",
-    "איתות יציאה": "bad",
+    "בתמיכה, מומנטום שלילי": "warm",
+    "שורי אך מומנטום שלילי": "warm",
     "שבר את תעלת השורי": "bad",
     "מעבר, לא ברור": "neutral",
-    "ריבאונד בשוק דובי": "bad",
-    "מגמה שלילית": "bad",
+    "מגמה נגדית": "bad",
 }
 DISQUALIFIED_PREFIX = "נפסל במבחן"   # התווית נבנית דינמית עם שם המבחן שנכשל
 
 BOOK_NOTES = [
-    ("כללי הטווח של ה-RSI (פרק 1)",
-     "האמונה הרווחת ש-RSI מתחת ל-30 הוא מכירת יתר ומעל 70 קניית יתר נכונה רק בשוק "
-     "חסר מגמה. בראון מראה שהתעלה שבה ה-RSI נע נקבעת לפי המגמה: בשוק שורי הוא נע בין "
-     "תמיכה של 40 עד 50 להתנגדות של 80 עד 90, ובשוק דובי בין תמיכה של 20 עד 30 "
-     "להתנגדות של 55 עד 65. לכן העמודה כאן מציגה את מיקום ה-RSI בתוך התעלה של המניה "
-     "עצמה, ולא מול מספר קבוע."),
-    ("איך נקבע המשטר",
-     "בראון לא נותנת מבחן מכני, ולכן המשטר כאן נקבע בהצלבה של שני מבחנים: המיקום מול "
-     "ממוצע נע של 200 יום והכיוון שלו, והתנהגות ה-RSI עצמו לאורך 120 הנרות האחרונים. "
-     "כששני המבחנים מסכימים הביטחון מסומן כוודאי. כשהם חלוקים המניה מסומנת כמצב מעבר, "
-     "וזה בדיוק השלב שבראון מתארת בין המשטרים."),
-    ("Positive Reversal ויעד המחיר (פרק 8)",
-     "תבנית שורית שבה ה-RSI עושה שפל נמוך יותר בזמן שהמחיר עושה שפל גבוה יותר. "
-     "יעד המחיר מחושב בנוסחה מנספח D של הספר. בדיקת הנוסחה מול הדוגמה שבספר עצמו, על "
-     "ה-S&P 500, מחזירה בדיוק את היעד שבראון מציגה שם."),
-    ("האוסילטור הנגזר (פרק 14)",
-     "RSI מוחלק שלוש פעמים: ממוצע אקספוננציאלי של 5, עליו ממוצע אקספוננציאלי של 3, "
-     "ומההפרש מול ממוצע פשוט של 9 מתקבלת היסטוגרמה. כיוון עולה עם ערך שלילי הוא "
-     "התאוששות מוקדמת, כיוון יורד עם ערך חיובי הוא היחלשות. בראון מזהירה שהנוסחה "
-     "מיועדת למניות ולמדדי מניות ואין להשתמש בה על אג\"ח."),
+    ("מה השכבה הזו עושה, ומה היא בכוונה לא עושה",
+     "האופק של הסינון הערכי הוא שנה עד שלוש - גראהם עצמו הגדיר כלל מכירה של "
+     "יעד רווח או שנתיים, המוקדם מביניהם. באופק כזה, שכבה טכנית אמורה לענות "
+     "על שאלה אחת: האם המגמה נגדך כרגע. לכן היא צומצמה לשני דברים בלבד, "
+     "משטר ומומנטום. יעדי מחיר לשבעה שבועות, סטופ לוס ומחשבון גודל פוזיציה "
+     "הוסרו - הם שייכים לאופק של מסחר סווינג, והסטופ אף סותר את גראהם "
+     "ישירות, שכן ירידת מחיר בלי שינוי בשווי היא אצלו סיבה לקנות ולא למכור."),
+    ("כללי הטווח של ה-RSI (בראון, פרק 1)",
+     "האמונה הרווחת ש-RSI מתחת ל-30 הוא מכירת יתר ומעל 70 קניית יתר נכונה רק "
+     "בשוק חסר מגמה. בראון מראה שהתעלה שבה ה-RSI נע נקבעת לפי המגמה: בשוק "
+     "שורי בין תמיכה של 40 עד 50 להתנגדות של 80 עד 90, ובשוק דובי בין 20 עד "
+     "30 ל-55 עד 65. לכן אותו מספר אומר דברים הפוכים בשני המשטרים, והעמודה "
+     "כאן מציגה את המיקום בתוך התעלה של המניה עצמה ולא מול מספר קבוע."),
+    ("איך נקבע המשטר, וכמה לסמוך על זה",
+     "בראון לא נותנת מבחן מכני, ולכן המשטר כאן נקבע בהצלבה של שניים: המיקום "
+     "מול ממוצע נע של 200 יום והכיוון שלו, והתנהגות ה-RSI לאורך 120 הנרות "
+     "האחרונים. כששניהם מסכימים הביטחון מסומן כוודאי, וכשהם חלוקים המניה "
+     "מסומנת כמעבר. זו פרשנות שלנו ולא של בראון, והחלק הפחות מבוסס בשכבה."),
+    ("מומנטום של 12 חודשים פחות החודש האחרון",
+     "הסיגנל עם הראיות החזקות ביותר מכל מה שיש כאן. החודש האחרון מושמט מפני "
+     "שבטווח הקצר פועל היפוך ולא המשכיות. אסנס, מוסקוביץ' ופדרסן הראו ששילוב "
+     "של ערך עם מומנטום משפר את יחס שארפ יותר מכל אחד מהם לבדו, בעיקר מפני "
+     "ששני הגורמים מתואמים שלילית."),
     ("שלב האיכות שקודם לדף הזה",
-     "לפני החישוב הטכני עוברות המניות סינון נוסף, לפי הצנרת של Wesley Gray ו-Tobias "
-     "Carlisle בספר Quantitative Value: קודם פוסלים ורק אחר כך מדרגים. מדד בניש "
-     "מזהה סימנים של מניפולציה בדוחות, ומדד אלטמן מזהה סכנת חדלות פירעון. מניה "
-     "שנכשלת באחד מהם מסומנת כנפסלת ואינה יכולה לקבל איתות כניסה, גם אם התמונה "
-     "הטכנית שלה מושלמת. מדד אלטמן אינו מחושב לבנקים ולחברות ביטוח מפני שהוא "
-     "פותח לחברות תעשייה ואינו תקף למבנה המאזן שלהן. אותו דבר נכון למדד בניש, "
-     "שנשען על מרווח גולמי, על יחס חייבים למכירות ועל נכסים שוטפים — שלושה "
-     "דברים שלבנק או לחברת ביטוח אין. שתי הפסילות מסומנות אצלן כלא רלוונטיות, "
-     "וזו מגבלה אמיתית: על החלק הפיננסי של הרשימה אין כרגע מבחן פסילה."),
-    ("ציון האיכות",
-     "ממוצע של ארבעה דירוגים אחוזוניים בתוך הרשימה של היום: EBIT חלקי שווי פעילות "
-     "(מדד הזול שנמצא החזק ביותר אצל גריי וקרלייל), רווחיות גולמית חלקי סך הנכסים "
-     "(המדד של נובי-מרקס), מומנטום של שנים עשר חודשים בהשמטת החודש האחרון, "
-     "ותשואת החזר הון נטו. זהו דירוג יחסי ולא ציון מוחלט — 90 פירושו שהמניה בעשירון "
-     "העליון של הרשימה הנוכחית, לא שהיא טובה במונחים מוחלטים."),
-    ("כיוון: למה הכל לונג",
-     "סינון גראהם מאתר חברות זולות ויציבות פיננסית, ומרשימה כזו אי אפשר לגזור "
-     "מועמדות לשורט — שורט דורש את ההפך, חברה יקרה ומתדרדרת. לכן כל איתות כניסה "
-     "כאן הוא לונג. איתותי היציאה מיועדים למי שכבר מחזיק במניה, ולא לפתיחת "
-     "פוזיציה הפוכה."),
-    ("אופק הזמן: מאיפה המספר",
-     "לכל מניה נסרקות שש שנות מסחר אחורה, מאותרות בה כל תבניות ה-Positive Reversal "
-     "הקודמות, ונבדק לגבי כל אחת אם המחיר אכן הגיע ליעד שהנוסחה חישבה ותוך כמה "
-     "ימי מסחר. ההנחה היא שהעסקה נפתחת רק חמישה נרות אחרי השפל, כי רק אז אפשר "
-     "לדעת שהיה שם שפל. המספר המוצג הוא החציון של המקרים שהגיעו ליעד, לצד כמה "
-     "מתוך כמה הגיעו. זו סטטיסטיקה לאחור על המניה עצמה, לא תחזית, ומדגם קטן "
-     "מדי מסומן ככזה."),
-    ("האופק הערכי נפרד לגמרי",
-     "מרווח הביטחון של גראהם, המוצג בעמודה הימנית, נסגר בדרך כלל על פני שנה עד "
-     "שלוש ולא על פני שבועות. אופק הזמן הטכני עונה על השאלה מתי להיכנס ומתי "
-     "התבנית מיצתה את עצמה, לא על השאלה כמה זמן להחזיק את ההשקעה."),
-    ("סטופ, יחס סיכון וגודל פוזיציה",
-     "הסטופ אינו אחוז שרירותי אלא הרמה שבה התבנית מתבטלת: השפל הנמוך ביותר מאז "
-     "הציר שיצר את האיתות, פחות חצי ATR כמרווח רעש. יחס הסיכון לתשואה הוא המרחק "
-     "ליעד חלקי המרחק לסטופ, ומתחת ל-1 האיתות אינו משתלם גם אם הוא נכון. גודל "
-     "הפוזיציה מחושב בדפדפן שלך מהמספרים שתזין ואינו נשמר בשום מקום. סטופ צמוד "
-     "מייצר כמות עצומה, ולכן יש תקרת ריכוזיות של 20 אחוז מהתיק למניה בודדת, "
-     "והדף מסמן מתי היא נכנסה לפעולה."),
-    ("אזהרה שחוזרת לאורך כל הספר",
-     "בראון חוזרת ומדגישה שאף אחד מהאיתותים האלה אינו איתות מסחר בפני עצמו. היא כותבת "
-     "במפורש שלקנות או למכור על סמך דפוס אחד בלבד הוא מתכון להפסד, ושכל איתות חייב "
-     "להיות מלווה ביעד מחיר ובגורם נוסף שמאשר אותו. הדף הזה הוא שכבת תזמון על גבי "
-     "סינון ערכי, לא מערכת מסחר."),
+     "לפני החישוב הטכני עוברות המניות פסילה לפי הצנרת של Gray ו-Carlisle: מדד "
+     "בניש למניפולציה בדוחות, ומדד אלטמן לסכנת חדלות פירעון. מניה שנכשלת "
+     "באחד מהם אינה יכולה לקבל איתות כניסה, גם אם התמונה הטכנית מושלמת. שני "
+     "המודלים אינם חלים על בנקים וחברות ביטוח."),
+    ("זו שכבת תזמון, לא מערכת מסחר",
+     "בראון חוזרת ומדגישה שאף איתות אינו מספיק בפני עצמו. השימוש הכן בדף הזה "
+     "הוא ככלי סבלנות: הרשימה הערכית קובעת מה לקנות, והדף יכול לומר לא השבוע. "
+     "הוא לא אמור לומר אל תקנה בכלל, ובוודאי לא למכור כי המחיר ירד."),
 ]
 
 PAGE = """<!DOCTYPE html>
@@ -162,7 +126,7 @@ input[type=search]:focus,select:focus,input[type=number]:focus{outline:2px solid
   font-family:"IBM Plex Mono",monospace; font-size:13.5px}
 .calc .calcnote{font-size:12px; color:var(--muted)}
 .tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
-table{border-collapse:collapse; width:100%; min-width:1620px}
+table{border-collapse:collapse; width:100%; min-width:1180px}
 th,td{padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; vertical-align:top}
 th{position:sticky; top:0; background:var(--paper); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; z-index:1}
 th:hover{color:var(--accent)}
@@ -216,7 +180,6 @@ footer a{color:var(--accent)}
     <option value="">הכל</option>
     <option value="כניסה">רק כניסות</option>
     <option value="החזקה">רק החזקות</option>
-    <option value="יציאה">רק איתותי יציאה</option>
     <option value="פסילה">רק נפסלות</option>
   </select>
   <select id="sig"><option value="">כל האיתותים</option>__SIG_OPTS__</select>
@@ -228,28 +191,17 @@ footer a{color:var(--accent)}
   </select>
 </div>
 
-<div class="toolbar calc">
-  <span class="calclabel">גודל פוזיציה:</span>
-  <label>תיק בדולרים <input type="number" id="port" value="100000" min="0" step="1000"></label>
-  <label>סיכון לעסקה באחוזים <input type="number" id="risk" value="1" min="0.1" max="10" step="0.1"></label>
-  <span class="calcnote">מחושב בדפדפן שלך בלבד ואינו נשמר בשום שרת</span>
-</div>
-
 <div class="tablewrap">
   <table id="t">
     <thead><tr>
       <th data-k="signal_rank">איתות <span class="arrow">▲</span></th>
-      <th data-k="horizon_weeks">כיוון ואופק <span class="arrow"></span></th>
+      <th class="nosort">כיוון</th>
       <th data-k="ticker">סימול <span class="arrow"></span></th>
       <th data-k="name">שם <span class="arrow"></span></th>
       <th data-k="price">מחיר <span class="arrow"></span></th>
       <th data-k="rsi">RSI ומיקום בתעלה <span class="arrow"></span></th>
-      <th data-k="pos_rev_upside_pct">יעד <span class="arrow"></span></th>
-      <th data-k="stop_pct">סטופ <span class="arrow"></span></th>
-      <th data-k="risk_reward">סיכון / תשואה <span class="arrow"></span></th>
-      <th class="nosort">כמות</th>
-      <th data-k="deriv_osc">אוסילטור נגזר <span class="arrow"></span></th>
-      <th data-k="dist_sma200_pct">מגמה <span class="arrow"></span></th>
+      <th data-k="momentum_12_1">מומנטום 12-1 <span class="arrow"></span></th>
+      <th data-k="dist_sma200_pct">מול ממוצע 200 <span class="arrow"></span></th>
       <th data-k="quality_score">איכות <span class="arrow"></span></th>
       <th data-k="margin_of_safety">גראהם <span class="arrow"></span></th>
     </tr></thead>
@@ -313,19 +265,16 @@ function targetCell(r){
 const MAX_POSITION_PCT = 20;   // תקרת ריכוזיות למניה בודדת
 const KINDCLASS = {"כניסה":"good","החזקה":"neutral","יציאה":"bad","המתנה":"neutral"};
 
+function momCell(r){
+  const m = num(r.momentum_12_1);
+  if (m === null) return `<td class="num">—</td>`;
+  const v = 100 * m;
+  return `<td class="num"><span class="${v>=0?'up':'down'}">${v>0?"+":""}${v.toFixed(0)}%</span></td>`;
+}
+
 function kindCell(r){
   const kind = r.signal_kind || "";
-  const w = num(r.horizon_weeks), n = num(r.hist_patterns), h = num(r.hist_hits);
-  let horizon;
-  if (w !== null && n !== null && n >= 4) {
-    horizon = `<span class="sm">חציון ${w} שבועות</span>
-               <span class="sm">${h} מתוך ${n} הגיעו ליעד</span>`;
-  } else if (n !== null && n > 0) {
-    horizon = `<span class="sm">מדגם קטן (${n} תבניות)</span>`;
-  } else {
-    horizon = `<span class="sm">אין תבניות קודמות</span>`;
-  }
-  return `<td><span class="tag t-${KINDCLASS[kind]||'neutral'}">${esc(r.direction||"לונג")} · ${esc(kind)}</span>${horizon}</td>`;
+  return `<td><span class="tag t-${KINDCLASS[kind]||'neutral'}">${esc(r.direction||"לונג")} · ${esc(kind)}</span></td>`;
 }
 
 function stopCell(r){
@@ -434,14 +383,9 @@ function render(){
       <td class="name">${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
       <td class="num">${num(r.price)?.toFixed(2) ?? "—"}</td>
       ${rsiCell(r)}
-      ${targetCell(r)}
-      ${stopCell(r)}
-      ${rrCell(r)}
-      ${sizeCell(r)}
-      ${derivCell(r)}
+      ${momCell(r)}
       <td class="num"><span class="${d200>=0?'up':'down'}">${d200===null?"—":(d200>0?"+":"")+d200.toFixed(1)+"%"}</span>
-        <span class="sm ltr">ADX ${num(r.adx)?.toFixed(1) ?? "—"}</span>
-        <span class="sm ltr">ATR ${num(r.atr_pct)?.toFixed(2) ?? "—"}%</span></td>
+        <span class="sm ltr">SMA ${num(r.sma200)?.toFixed(2) ?? "—"}</span></td>
       ${qualityCell(r)}
       ${grahamCell(r)}
     </tr>`;
@@ -460,22 +404,8 @@ document.querySelectorAll("th[data-k]").forEach(th => {
     render();
   });
 });
-["q","sig","reg","kind","port","risk"].forEach(id => document.getElementById(id)
-  .addEventListener("input", () => { saveCalc(); render(); }));
-
-// נוחות לגולש בלבד: המספרים נשמרים בדפדפן שלו ולא עוזבים אותו.
-function saveCalc(){
-  try {
-    localStorage.setItem("graham_calc",
-      JSON.stringify({p: document.getElementById("port").value,
-                      r: document.getElementById("risk").value}));
-  } catch (e) {}
-}
-try {
-  const saved = JSON.parse(localStorage.getItem("graham_calc") || "null");
-  if (saved && saved.p) document.getElementById("port").value = saved.p;
-  if (saved && saved.r) document.getElementById("risk").value = saved.r;
-} catch (e) {}
+["q","sig","reg","kind"].forEach(id => document.getElementById(id)
+  .addEventListener("input", render));
 
 render();
 </script>
@@ -502,9 +432,9 @@ def main():
     for r in rows:
         counts[r.get("signal", "")] = counts.get(r.get("signal", ""), 0) + 1
 
-    order = ["אזור כניסה", "היפוך חיובי טרי", "מעבר משטר", "בתמיכה, ממתין למומנטום",
-             "מגמה תקינה", "איתות יציאה", "מתוח", "שבר את תעלת השורי",
-             "מעבר, לא ברור", "ריבאונד בשוק דובי", "מגמה שלילית"]
+    order = ["אזור כניסה", "מגמה תקינה", "בתמיכה, מומנטום שלילי",
+             "שורי אך מומנטום שלילי", "שבר את תעלת השורי", "מעבר, לא ברור",
+             "מגמה נגדית"]
     present = [s for s in order if counts.get(s)]
     present += sorted(k for k in counts
                       if k and k not in order and k.startswith(DISQUALIFIED_PREFIX))
@@ -514,20 +444,18 @@ def main():
         kinds[r.get("signal_kind", "")] = kinds.get(r.get("signal_kind", ""), 0) + 1
     bulls = sum(1 for r in rows if r.get("regime") == "שורי")
 
-    def _rr(r):
+    def _mom(r):
         try:
-            return float(r.get("risk_reward"))
+            return float(r.get("momentum_12_1"))
         except (TypeError, ValueError):
             return None
-    worthwhile = sum(1 for r in rows
-                     if r.get("signal_kind") == "כניסה" and (_rr(r) or 0) >= 2)
+    positive_mom = sum(1 for r in rows if (_mom(r) or 0) > 0)
 
     stats = [("מניות בבדיקה", total),
              ("נפסלו באיכות", kinds.get("פסילה", 0)),
              ("איתותי כניסה", kinds.get("כניסה", 0)),
-             ("מהם עם יחס 2 ומעלה", worthwhile),
-             ("איתותי יציאה", kinds.get("יציאה", 0)),
-             ("במשטר שורי", bulls)]
+             ("במשטר שורי", bulls),
+             ("עם מומנטום חיובי", positive_mom)]
     for s in present[:2]:
         stats.append((s, counts[s]))
     stats_html = "".join(

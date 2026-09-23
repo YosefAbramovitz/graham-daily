@@ -562,68 +562,51 @@ def summarize(ticker: str, hist: pd.DataFrame) -> dict:
 
 def classify_signal(row: dict):
     """
-    סיווג מסכם, ומחזיר גם את סוג הפעולה: כניסה, החזקה או יציאה.
+    סיווג מצומצם: משטר, מיקום ב-RSI, ומומנטום. זהו.
 
-    הכיוון תמיד לונג. סינון גראהם מאתר חברות זולות ויציבות, וממנו אי אפשר
-    לגזור מועמדות לשורט, ולכן איתותי היציאה כאן מיועדים למי שכבר מחזיק
-    ולא לפתיחת פוזיציה הפוכה.
+    הגרסה הקודמת שקללה גם יעדי מחיר, אוסילטור נגזר וסטופ. הם הוסרו מפני
+    שהם שייכים לאופק של שבועות, והאופק כאן הוא שנתיים - גראהם עצמו הגדיר
+    כלל מכירה של יעד או שנתיים, המוקדם מביניהם. שכבה טכנית באופק כזה
+    אמורה לענות על שאלה אחת בלבד: האם המגמה נגדי כרגע, או לא.
 
-    בראון חוזרת ומדגישה שאיתות אחד לעולם אינו מספיק, ולכן כל סיווג כאן דורש
-    צירוף של משטר, מיקום בתעלה וכיוון המומנטום.
+    המומנטום הוא של 12 חודשים בהשמטת החודש האחרון, ומגיע משלב האיכות.
     """
     regime = row.get("regime_key")
     zone = row.get("rsi_zone", "")
-    deriv_up = row.get("deriv_dir") == "עולה"
-    recent_pos = row.get("pos_rev_target") != "" \
-        and isinstance(row.get("pos_rev_bars_ago"), int) \
-        and row["pos_rev_bars_ago"] <= 60
-    fresh_neg = row.get("neg_rev_target") != "" \
-        and isinstance(row.get("neg_rev_bars_ago"), int) \
-        and row["neg_rev_bars_ago"] <= 30
 
     try:
         rsi_now = float(row.get("rsi"))
     except (TypeError, ValueError):
         rsi_now = None
+    try:
+        mom = float(_clean(row.get("momentum_12_1")))
+    except (TypeError, ValueError):
+        mom = None
 
-    # דגל אדום משלב האיכות גובר על הכל. גריי וקרלייל מדגישים שסדר הפעולות
-    # הוא העיקר: קודם פוסלים, ורק אחר כך מדרגים ומתזמנים.
     red = str(_clean(row.get("red_flag", ""))).strip()
     if red:
         return f"נפסל במבחן {red}", 6, "פסילה"
 
-    # בשוק שורי בראון מקבלת ירידה עד 38-39 כמבחן של אזור התמיכה. מתחת לזה
-    # התעלה השורית נשברה, וזו אזהרה ולא הזדמנות כניסה.
-    broke_channel = (regime == "bull" and rsi_now is not None
-                     and rsi_now < TRANSITION_FLOOR)
-    at_support = (regime == "bull" and not broke_channel
+    # בראון מקבלת ירידה עד 38-39 כמבחן של אזור התמיכה השורי. מתחת לזה
+    # התעלה נשברה.
+    broke = (regime == "bull" and rsi_now is not None and rsi_now < TRANSITION_FLOOR)
+    at_support = (regime == "bull" and not broke
                   and zone in ("על התמיכה", "מתחת לתמיכה"))
+    mom_positive = mom is not None and mom > 0
 
-    # אזהרות קודמות להזדמנויות: היפוך שלילי טרי סותר כל איתות כניסה.
-    if regime in ("bull", "transition") and fresh_neg:
-        return "איתות יציאה", 7, "יציאה"
-    if broke_channel:
-        return "שבר את תעלת השורי", 9, "יציאה"
-
-    if at_support and deriv_up:
+    if broke:
+        return "שבר את תעלת השורי", 5, "המתנה"
+    if at_support and mom_positive:
         return "אזור כניסה", 1, "כניסה"
-    if regime == "bull" and recent_pos and deriv_up:
-        return "היפוך חיובי טרי", 2, "כניסה"
-    if row.get("regime_shift") == "מעבר לשוק שורי":
-        return "מעבר משטר", 3, "כניסה"
     if at_support:
-        return "בתמיכה, ממתין למומנטום", 4, "החזקה"
-    if regime == "bull" and zone == "אמצע התעלה":
-        return "מגמה תקינה", 5, "החזקה"
-    if regime == "bull" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "מתוח", 8, "יציאה"
+        return "בתמיכה, מומנטום שלילי", 3, "המתנה"
+    if regime == "bull" and mom_positive:
+        return "מגמה תקינה", 2, "החזקה"
+    if regime == "bull":
+        return "שורי אך מומנטום שלילי", 4, "החזקה"
     if regime == "transition":
-        return "מעבר, לא ברור", 10, "המתנה"
-    if regime == "bear" and zone in ("על ההתנגדות", "מעל ההתנגדות"):
-        return "ריבאונד בשוק דובי", 11, "המתנה"
-    if regime == "bear":
-        return "מגמה שלילית", 12, "המתנה"
-    return "", 13, "המתנה"
+        return "מעבר, לא ברור", 7, "המתנה"
+    return "מגמה נגדית", 8, "המתנה"
 
 
 # ---------------------------------------------------------------------------
