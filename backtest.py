@@ -179,39 +179,71 @@ def run(tickers: List[str], start_year: int, end_year: int,
     close = load_prices(tickers, dates[0] - timedelta(days=400),
                         dates[-1] + timedelta(days=400))
     if close.empty:
-        raise RuntimeError("לא התקבלו מחירים")
+        raise RuntimeError("לא התקבלו מחירים בכלל")
 
-    cik_map = sf.ticker_to_cik()
+    # כיסוי הנתונים נבדק לפני שמחשבים משהו. בדיקה לאחור שרצה על שליש
+    # מהיקום מחזירה מספר שנראה סביר לגמרי ואינו אומר דבר, וזה בדיוק סוג
+    # הכשל השקט שכבר עלה לנו ביום עבודה.
+    with_prices = int(close.notna().any().sum())
+    price_cover = with_prices / max(len(tickers), 1)
+    if not quiet:
+        print(f"מחירים: {with_prices} מתוך {len(tickers)} מניות "
+              f"({price_cover*100:.0f}%)", flush=True)
+    if price_cover < 0.5:
+        raise RuntimeError(
+            f"רק {with_prices} מתוך {len(tickers)} מניות קיבלו מחירים. "
+            "זה נמוך מכדי להסיק משהו - בדוק את מקור המחירים לפני שתסמוך על התוצאה.")
+
+    cik_map = sf.ticker_to_cik(quiet=quiet)
+    if not cik_map:
+        raise RuntimeError(
+            "אין מיפוי מסימול ל-CIK. בלעדיו אי אפשר למשוך דוחות. "
+            "בדוק שהסוד SEC_USER_AGENT מוגדר.")
+
     facts: Dict[str, dict] = {}
+    unmapped = 0
     for i, tk in enumerate(tickers, 1):
         cik = cik_map.get(tk.upper())
         if cik is None:
+            unmapped += 1
             continue
         compact = sf.company_facts(cik)
         if compact:
             facts[tk] = compact
         if not quiet and i % 50 == 0:
-            print(f"  דוחות: {i}/{len(tickers)}", flush=True)
+            print(f"  דוחות: {i}/{len(tickers)} (נמצאו {len(facts)})", flush=True)
 
+    facts_cover = len(facts) / max(len(tickers), 1)
     if not quiet:
-        print(f"נמצאו דוחות ל-{len(facts)} מתוך {len(tickers)} מניות\n", flush=True)
+        print(f"דוחות: {len(facts)} מתוך {len(tickers)} מניות "
+              f"({facts_cover*100:.0f}%), {unmapped} ללא CIK\n", flush=True)
+    if facts_cover < 0.5:
+        raise RuntimeError(
+            f"רק {len(facts)} מתוך {len(tickers)} מניות קיבלו דוחות מה-SEC. "
+            "התוצאה לא תהיה מייצגת.")
+
+    coverage = {"tickers": len(tickers), "with_prices": with_prices,
+                "with_facts": len(facts), "unmapped": unmapped}
 
     periods = []
     for i in range(len(dates) - 1):
         buy, sell = dates[i], dates[i + 1]
         picked, universe_returns = [], []
+        priced = scored = 0
 
         for tk, compact in facts.items():
             p0 = price_on(close, tk, buy)
             p1 = price_on(close, tk, sell)
             if not p0 or not p1:
                 continue
+            priced += 1
             ret = p1 / p0 - 1.0
             universe_returns.append(ret)
 
             m = metrics_at(compact, buy, p0)
             if not m:
                 continue
+            scored += 1
             ok, checks = passes_screen(m)
             if ok:
                 picked.append({"ticker": tk, "ret": ret, "ebit_ev": m["ebit_ev"],
@@ -227,6 +259,7 @@ def run(tickers: List[str], start_year: int, end_year: int,
 
         periods.append({
             "buy": buy.isoformat(), "sell": sell.isoformat(),
+            "n_priced": priced, "n_scored": scored,
             "n_passed": len(picked), "n_held": len(held),
             "portfolio": round(port, 4), "benchmark": round(bench, 4),
             "excess": round(port - bench, 4),
@@ -234,11 +267,14 @@ def run(tickers: List[str], start_year: int, end_year: int,
         })
         if not quiet:
             print(f"{buy.isoformat()} -> {sell.isoformat()}: "
+                  f"יקום {priced}, נמדדו {scored}, "
                   f"עברו {len(picked)}, הוחזקו {len(held)}, "
                   f"תיק {port*100:+.1f}%, יקום {bench*100:+.1f}%, "
                   f"עודף {(port-bench)*100:+.1f}%", flush=True)
 
-    return summarise(periods, len(facts))
+    out = summarise(periods, len(facts))
+    out['coverage'] = coverage
+    return out
 
 
 def summarise(periods: List[dict], n_universe: int) -> dict:
@@ -308,6 +344,10 @@ def main() -> int:
     print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
     print(f"שנים שבהן היכה את היקום:   {result['years_beating_benchmark']}")
     print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
+    cov = result.get("coverage", {})
+    if cov:
+        print(f"\nכיסוי: {cov['with_prices']}/{cov['tickers']} עם מחירים, "
+              f"{cov['with_facts']}/{cov['tickers']} עם דוחות")
     print(CAVEATS)
 
     with open(args.out, "w", encoding="utf-8") as fh:
