@@ -81,15 +81,21 @@ jobs:
           MODE: ${{ inputs.mode || 'both' }}
         run: python tech_screener.py --in quality_results.csv --mode "$MODE" --out tech_results.csv --sleep 0.15
 
+      - name: Apply Graham's sell rule to open positions
+        if: steps.gate.outputs.go == 'true'
+        run: python positions.py --in positions.csv --out positions_status.csv
+
       - name: Build the technical page
         if: steps.gate.outputs.go == 'true'
-        run: python build_tech_page.py --in tech_results.csv --out docs/technical.html
+        run: |
+          python build_tech_page.py --in tech_results.csv \
+            --positions positions_status.csv --out docs/technical.html
 
       - name: Commit and push results
         if: ${{ steps.gate.outputs.go == 'true' && inputs.tickers == '' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add quality_results.csv tech_results.csv docs/technical.html
+          git add quality_results.csv tech_results.csv positions_status.csv docs/technical.html
           git diff --staged --quiet || git commit -m "Daily technical stage"
           git push || echo "nothing to push"

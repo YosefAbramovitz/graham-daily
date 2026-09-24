@@ -1,0 +1,102 @@
+name: Backtest
+
+# ריצה ידנית בלבד. הבדיקה מורידה דוחות של מאות חברות ולוקחת זמן, ואין טעם
+# להריץ אותה כל יום: התוצאה משתנה רק כשמשנים את המסך.
+
+on:
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "היקום לבדיקה"
+        required: false
+        default: "sp500"
+        type: choice
+        options: ["sp500", "sp1500"]
+      tickers:
+        description: "רשימת טיקרים ידנית, מופרדת בפסיקים. ריק = היקום כולו."
+        required: false
+        default: ""
+      start:
+        description: "שנת התחלה"
+        required: false
+        default: "2015"
+      end:
+        description: "שנת סיום"
+        required: false
+        default: "2025"
+      max_names:
+        description: "כמה מניות מחזיקים בכל תקופה"
+        required: false
+        default: "30"
+      commit:
+        description: "לשמור את התוצאה במאגר"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backtest
+  cancel-in-progress: false
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # הדוחות של חברה כמעט אינם משתנים אחורה, ולכן שווה לשמור אותם בין ריצות.
+      - name: Restore the SEC cache
+        uses: actions/cache@v4
+        with:
+          path: .sec_cache
+          key: sec-facts-${{ inputs.universe }}-${{ github.run_id }}
+          restore-keys: |
+            sec-facts-${{ inputs.universe }}-
+            sec-facts-
+
+      - name: Run the backtest
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'graham-daily screener' }}
+          UNIVERSE: ${{ inputs.universe || 'sp500' }}
+          TICKERS: ${{ inputs.tickers }}
+          START: ${{ inputs.start || '2015' }}
+          END: ${{ inputs.end || '2025' }}
+          MAX_NAMES: ${{ inputs.max_names || '30' }}
+        run: |
+          if [ -n "$TICKERS" ]; then
+            python backtest.py --tickers "$TICKERS" --start "$START" --end "$END" \
+              --max-names "$MAX_NAMES" --out backtest_results.json
+          else
+            python backtest.py --universe "$UNIVERSE" --start "$START" --end "$END" \
+              --max-names "$MAX_NAMES" --out backtest_results.json
+          fi
+
+      - name: Upload the result
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-results
+          path: backtest_results.json
+
+      - name: Commit the result
+        if: ${{ inputs.commit }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backtest_results.json
+          git diff --staged --quiet || git commit -m "Backtest results"
+          git push || echo "nothing to push"

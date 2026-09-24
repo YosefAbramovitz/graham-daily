@@ -58,6 +58,9 @@ jobs:
         env:
           TICKERS: ${{ inputs.tickers }}
           UNIVERSE: ${{ inputs.universe || 'sp1500' }}
+          # ה-SEC דורשת כתובת יצירת קשר בכותרת הבקשה. מוגדרת כסוד במאגר,
+          # כדי שכתובת פרטית לא תשב בקוד פתוח.
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'graham-daily screener' }}
         run: |
           if [ -n "$TICKERS" ]; then
             echo "Test run over: $TICKERS"
