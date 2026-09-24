@@ -100,18 +100,29 @@ def metrics_at(compact: Dict[str, List[dict]], when: date,
     return m
 
 
-def passes_screen(m: dict) -> tuple:
-    """הקריטריונים של המסך המודרני. מחזיר (עבר, מילון בדיקות)."""
+def passes_screen(m: dict, thresholds: Optional[dict] = None) -> tuple:
+    """הקריטריונים של המסך המודרני. מחזיר (עבר, מילון בדיקות).
+
+    הספים ניתנים לדריסה כדי שאפשר יהיה לסרוק אותם. זה נועד לענות על שאלה
+    מבנית - האם יש טווח שבו המסך מייצר תיק בגודל סביר - ולא לכייל עד
+    שהמספר נראה יפה. סף שנבחר אחרי שראית את התוצאה הוא לא ממצא.
+    """
+    t = thresholds or {}
     checks = {
-        "size": bool(m.get("revenue") is not None and m["revenue"] >= MIN_REVENUE_INDUSTRIAL),
+        "size": bool(m.get("revenue") is not None
+                     and m["revenue"] >= t.get("min_revenue", MIN_REVENUE_INDUSTRIAL)),
         "stability": bool(m.get("earnings_stable")),
         "strength": bool(m.get("net_debt_to_ebitda") is not None
-                         and m["net_debt_to_ebitda"] <= MAX_NET_DEBT_TO_EBITDA),
+                         and m["net_debt_to_ebitda"] <= t.get("max_net_debt_to_ebitda",
+                                                              MAX_NET_DEBT_TO_EBITDA)),
         "payout": bool(m.get("net_payout_yield") is not None
-                       and m["net_payout_yield"] >= MIN_NET_PAYOUT_YIELD),
-        "cheap": bool(m.get("ebit_ev") is not None and m["ebit_ev"] >= MIN_EBIT_EV),
+                       and m["net_payout_yield"] >= t.get("min_net_payout_yield",
+                                                          MIN_NET_PAYOUT_YIELD)),
+        "cheap": bool(m.get("ebit_ev") is not None
+                      and m["ebit_ev"] >= t.get("min_ebit_ev", MIN_EBIT_EV)),
         "profitable": bool(m.get("gross_profitability") is not None
-                           and m["gross_profitability"] >= MIN_GROSS_PROFITABILITY),
+                           and m["gross_profitability"] >= t.get("min_gross_profitability",
+                                                                 MIN_GROSS_PROFITABILITY)),
     }
     return all(checks.values()), checks
 
@@ -141,15 +152,37 @@ def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
         pass
 
     import yfinance as yf
-    data = yf.download(tickers, start=start.isoformat(), end=end.isoformat(),
-                       auto_adjust=True, progress=False, group_by="column",
-                       threads=True)
-    if data is None or data.empty:
+
+    # בקבוצות ולא בבת אחת. הורדה של חמש מאות סימולים בבקשה אחת מחזירה
+    # שקט חלקי: חלק מהעמודות פשוט חסרות, וחלק מהטווח נחתך - בריצה הראשונה
+    # זה הפיל 20% מהיקום ואת כל שנת 2015, בלי שום הודעת שגיאה.
+    frames = []
+    batch = 40
+    for i in range(0, len(tickers), batch):
+        chunk = tickers[i:i + batch]
+        try:
+            data = yf.download(chunk, start=start.isoformat(), end=end.isoformat(),
+                               auto_adjust=True, progress=False, group_by="column",
+                               threads=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  קבוצה {i//batch + 1}: {type(exc).__name__}", flush=True)
+            continue
+        if data is None or data.empty:
+            continue
+        if isinstance(data.columns, pd.MultiIndex):
+            if "Close" not in data.columns.get_level_values(0):
+                continue
+            part = data["Close"]
+        else:
+            part = data[["Close"]].rename(columns={"Close": chunk[0]})
+        frames.append(part)
+
+    if not frames:
         return pd.DataFrame()
-    close = data["Close"] if "Close" in data.columns.get_level_values(0) else data
-    if isinstance(close, pd.Series):
-        close = close.to_frame(tickers[0])
-    return close.sort_index()
+
+    close = pd.concat(frames, axis=1).sort_index()
+    close = close.loc[:, ~close.columns.duplicated()]
+    return close
 
 
 def price_on(close: pd.DataFrame, ticker: str, when: date) -> Optional[float]:
@@ -173,7 +206,8 @@ def rebalance_dates(start_year: int, end_year: int, month: int, day: int) -> Lis
 
 def run(tickers: List[str], start_year: int, end_year: int,
         month: int = 6, day: int = 30, cost_bps: float = DEFAULT_COST_BPS,
-        max_names: int = 30, quiet: bool = False) -> dict:
+        max_names: int = 30, quiet: bool = False,
+        thresholds: Optional[dict] = None) -> dict:
     """בדיקה לאחור עם איזון שנתי והחזקה שווה."""
     dates = rebalance_dates(start_year, end_year, month, day)
     close = load_prices(tickers, dates[0] - timedelta(days=400),
@@ -186,9 +220,13 @@ def run(tickers: List[str], start_year: int, end_year: int,
     # הכשל השקט שכבר עלה לנו ביום עבודה.
     with_prices = int(close.notna().any().sum())
     price_cover = with_prices / max(len(tickers), 1)
+    first, last = close.index.min().date(), close.index.max().date()
     if not quiet:
         print(f"מחירים: {with_prices} מתוך {len(tickers)} מניות "
-              f"({price_cover*100:.0f}%)", flush=True)
+              f"({price_cover*100:.0f}%), {first} עד {last}", flush=True)
+    if first > dates[0]:
+        print(f"[אזהרה] המחירים מתחילים ב-{first}, אחרי תאריך האיזון הראשון "
+              f"({dates[0]}). התקופה הראשונה תהיה ריקה.", flush=True)
     if price_cover < 0.5:
         raise RuntimeError(
             f"רק {with_prices} מתוך {len(tickers)} מניות קיבלו מחירים. "
@@ -244,7 +282,7 @@ def run(tickers: List[str], start_year: int, end_year: int,
             if not m:
                 continue
             scored += 1
-            ok, checks = passes_screen(m)
+            ok, checks = passes_screen(m, thresholds)
             if ok:
                 picked.append({"ticker": tk, "ret": ret, "ebit_ev": m["ebit_ev"],
                                "gross_profitability": m["gross_profitability"]})
@@ -330,6 +368,12 @@ def main() -> int:
     ap.add_argument("--day", type=int, default=30)
     ap.add_argument("--max-names", type=int, default=30)
     ap.add_argument("--cost-bps", type=float, default=DEFAULT_COST_BPS)
+    ap.add_argument("--min-ebit-ev", type=float, default=None,
+                    help="דריסת הסף של תשואת הרווח התפעולי (ברירת מחדל 0.10)")
+    ap.add_argument("--min-gross-profitability", type=float, default=None,
+                    help="דריסת סף הרווחיות הגולמית (ברירת מחדל 0.20)")
+    ap.add_argument("--min-net-payout-yield", type=float, default=None)
+    ap.add_argument("--max-net-debt-to-ebitda", type=float, default=None)
     ap.add_argument("--out", default="backtest_results.json")
     args = ap.parse_args()
 
@@ -340,9 +384,20 @@ def main() -> int:
         tickers = (get_sp1500_tickers() if args.universe == "sp1500"
                    else get_sp500_tickers())
 
-    print(f"בדיקה לאחור על {len(tickers)} מניות, {args.start}-{args.end}\n")
+    thresholds = {k: v for k, v in {
+        "min_ebit_ev": args.min_ebit_ev,
+        "min_gross_profitability": args.min_gross_profitability,
+        "min_net_payout_yield": args.min_net_payout_yield,
+        "max_net_debt_to_ebitda": args.max_net_debt_to_ebitda,
+    }.items() if v is not None}
+
+    print(f"בדיקה לאחור על {len(tickers)} מניות, {args.start}-{args.end}")
+    if thresholds:
+        print(f"ספים שנדרסו: {thresholds}")
+    print()
     result = run(tickers, args.start, args.end, args.month, args.day,
-                 args.cost_bps, args.max_names)
+                 args.cost_bps, args.max_names, thresholds=thresholds)
+    result["thresholds"] = thresholds or "ברירת מחדל"
 
     print("\n" + "=" * 60)
     print(f"תשואה שנתית ממוצעת, התיק:  {result['portfolio_cagr']*100:+.2f}%")
