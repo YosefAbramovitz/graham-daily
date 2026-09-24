@@ -131,41 +131,17 @@ def passes_screen(m: dict, thresholds: Optional[dict] = None) -> tuple:
 # מחירים
 # ---------------------------------------------------------------------------
 
-def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
-    """סגירות מתואמות יומיות לכל היקום, בהורדה אחת.
-
-    כשיש מפתח Alpaca משתמשים בו, מפני שהוא ממשק אמיתי ולא גירוד אתר. אחרת
-    נופלים ל-yfinance, שעובד אבל נוטה להחזיר עמודות חסרות בהורדות גדולות.
-    """
-    try:
-        import alpaca_prices
-        if alpaca_prices.available():
-            print("מושך מחירים מ-Alpaca...", flush=True)
-            close = alpaca_prices.daily_closes(tickers, start, end, quiet=False)
-            if not close.empty:
-                missing = len(tickers) - close.shape[1]
-                if missing > 0:
-                    print(f"  {missing} סימולים לא חזרו מ-Alpaca", flush=True)
-                return close
-            print("  Alpaca לא החזיר נתונים, ממשיכים עם yahoo", flush=True)
-    except ImportError:
-        pass
-
+def _yahoo_closes(tickers: List[str], start: date, end: date) -> pd.DataFrame:
+    """סגירות מתואמות מ-yfinance, בקבוצות של ארבעים."""
     import yfinance as yf
-
-    # בקבוצות ולא בבת אחת. הורדה של חמש מאות סימולים בבקשה אחת מחזירה
-    # שקט חלקי: חלק מהעמודות פשוט חסרות, וחלק מהטווח נחתך - בריצה הראשונה
-    # זה הפיל 20% מהיקום ואת כל שנת 2015, בלי שום הודעת שגיאה.
     frames = []
-    batch = 40
-    for i in range(0, len(tickers), batch):
-        chunk = tickers[i:i + batch]
+    for i in range(0, len(tickers), 40):
+        chunk = tickers[i:i + 40]
         try:
             data = yf.download(chunk, start=start.isoformat(), end=end.isoformat(),
                                auto_adjust=True, progress=False, group_by="column",
                                threads=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  קבוצה {i//batch + 1}: {type(exc).__name__}", flush=True)
+        except Exception:  # noqa: BLE001
             continue
         if data is None or data.empty:
             continue
@@ -176,13 +152,55 @@ def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
         else:
             part = data[["Close"]].rename(columns={"Close": chunk[0]})
         frames.append(part)
-
     if not frames:
         return pd.DataFrame()
+    out = pd.concat(frames, axis=1).sort_index()
+    return out.loc[:, ~out.columns.duplicated()]
 
-    close = pd.concat(frames, axis=1).sort_index()
-    close = close.loc[:, ~close.columns.duplicated()]
-    return close
+
+def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
+    """סגירות מתואמות יומיות, משני המקורות יחד.
+
+    Alpaca הוא ממשק אמיתי ולכן המקור המועדף, אבל בתוכנית החינמית הוא מכסה
+    כ-80% מהיקום ומתחיל ב-2016. yfinance מכסה טווח ארוך יותר ושמות אחרים,
+    ונופל בדרכים משלו. לקחת את שניהם ולמלא חורים נותן כיסוי טוב יותר מכל
+    אחד לבדו, וזה משנה: כל מניה חסרה יוצאת גם מהתיק וגם ממדד ההשוואה.
+    """
+    alpaca = pd.DataFrame()
+    try:
+        import alpaca_prices
+        if alpaca_prices.available():
+            print("מושך מחירים מ-Alpaca...", flush=True)
+            alpaca = alpaca_prices.daily_closes(tickers, start, end, quiet=False)
+            got = int(alpaca.notna().any().sum()) if not alpaca.empty else 0
+            print(f"  Alpaca: {got}/{len(tickers)} סימולים", flush=True)
+    except ImportError:
+        pass
+
+    have = set()
+    if not alpaca.empty:
+        have = {c for c in alpaca.columns if alpaca[c].notna().any()}
+    missing = [t for t in tickers if t not in have]
+
+    yahoo = pd.DataFrame()
+    if missing:
+        print(f"משלים {len(missing)} סימולים מ-yahoo...", flush=True)
+        yahoo = _yahoo_closes(missing, start, end)
+        got_y = int(yahoo.notna().any().sum()) if not yahoo.empty else 0
+        print(f"  yahoo: {got_y}/{len(missing)} סימולים", flush=True)
+
+    if alpaca.empty:
+        return yahoo
+    if yahoo.empty:
+        return alpaca
+
+    # איחוד: Alpaca קובע איפה שיש לו נתון, yahoo ממלא את השאר
+    combined = alpaca.join(yahoo[[c for c in yahoo.columns if c not in alpaca.columns]],
+                           how="outer")
+    overlap = [c for c in yahoo.columns if c in alpaca.columns]
+    for c in overlap:
+        combined[c] = combined[c].combine_first(yahoo[c])
+    return combined.sort_index()
 
 
 def price_on(close: pd.DataFrame, ticker: str, when: date) -> Optional[float]:
@@ -200,16 +218,33 @@ def price_on(close: pd.DataFrame, ticker: str, when: date) -> Optional[float]:
 # הריצה
 # ---------------------------------------------------------------------------
 
-def rebalance_dates(start_year: int, end_year: int, month: int, day: int) -> List[date]:
+def rebalance_dates(start_year: int, end_year: int, month: int, day: int,
+                    freq: str = "annual") -> List[date]:
+    """תאריכי האיזון.
+
+    איזון רבעוני נותן פי ארבעה תצפיות, וזו הדרך המעשית היחידה להגיע לכוח
+    סטטיסטי על היסטוריה של עשר שנים. שימו לב שהתצפיות אינן בלתי תלויות -
+    אותן מניות ממשיכות מרבעון לרבעון - ולכן גודל המדגם האפקטיבי קטן מפי
+    ארבעה, וה-t שיוצא הוא גבול עליון אופטימי.
+    """
+    if freq == "quarterly":
+        out = []
+        for y in range(start_year, end_year + 1):
+            for m in (month, month + 3, month + 6, month + 9):
+                yy, mm = y + (m - 1) // 12, (m - 1) % 12 + 1
+                d = min(day, 28)
+                if yy <= end_year:
+                    out.append(date(yy, mm, d))
+        return sorted(set(out))
     return [date(y, month, day) for y in range(start_year, end_year + 1)]
 
 
 def run(tickers: List[str], start_year: int, end_year: int,
         month: int = 6, day: int = 30, cost_bps: float = DEFAULT_COST_BPS,
         max_names: int = 30, quiet: bool = False,
-        thresholds: Optional[dict] = None) -> dict:
+        thresholds: Optional[dict] = None, freq: str = "annual") -> dict:
     """בדיקה לאחור עם איזון שנתי והחזקה שווה."""
-    dates = rebalance_dates(start_year, end_year, month, day)
+    dates = rebalance_dates(start_year, end_year, month, day, freq)
     close = load_prices(tickers, dates[0] - timedelta(days=400),
                         dates[-1] + timedelta(days=400))
     if close.empty:
@@ -322,17 +357,25 @@ def summarise(periods: List[dict], n_universe: int) -> dict:
     if not periods:
         return {"periods": [], "note": "אין תקופות"}
 
+    # התשואה מוצמדת לזמן שחלף בפועל ולא למספר התקופות. באיזון רבעוני
+    # ארבעים תקופות הן עשר שנים, ולחלק בארבעים היה מנפח את התשואה השנתית
+    # פי ארבעה בערך.
+    span_days = ((date.fromisoformat(periods[-1]["sell"])
+                  - date.fromisoformat(periods[0]["buy"])).days)
+    years_elapsed = max(span_days / 365.25, 1e-9)
+
     def compound(key):
         total = 1.0
         for p in periods:
             total *= (1 + p[key])
-        return total ** (1 / len(periods)) - 1
+        return total ** (1 / years_elapsed) - 1
 
     invested = [p for p in periods if p["n_held"] > 0]
     wins = sum(1 for p in invested if p["excess"] > 0)
     return {
         "periods": periods,
-        "years": len(periods),
+        "periods_count": len(periods),
+        "years": round(years_elapsed, 2),
         "years_invested": len(invested),
         "years_in_cash": len(periods) - len(invested),
         "universe_size": n_universe,
@@ -341,8 +384,8 @@ def summarise(periods: List[dict], n_universe: int) -> dict:
         "excess_cagr": round(compound("portfolio") - compound("benchmark"), 4),
         "years_beating_benchmark": f"{wins}/{len(invested)}" if invested else "אין תקופות מושקעות",
         "avg_names_held": round(sum(p["n_held"] for p in periods) / len(periods), 1),
-        "worst_year": min(p["portfolio"] for p in periods),
-        "best_year": max(p["portfolio"] for p in periods),
+        "worst_period": min(p["portfolio"] for p in periods),
+        "best_period": max(p["portfolio"] for p in periods),
     }
 
 
@@ -364,7 +407,9 @@ def main() -> int:
     ap.add_argument("--tickers", default="", help="רשימה ידנית במקום יקום")
     ap.add_argument("--start", type=int, default=2015)
     ap.add_argument("--end", type=int, default=date.today().year)
-    ap.add_argument("--month", type=int, default=6, help="חודש האיזון השנתי")
+    ap.add_argument("--freq", choices=["annual", "quarterly"], default="annual",
+                    help="תדירות האיזון. רבעוני נותן פי ארבעה תצפיות")
+    ap.add_argument("--month", type=int, default=6, help="חודש האיזון הראשון")
     ap.add_argument("--day", type=int, default=30)
     ap.add_argument("--max-names", type=int, default=30)
     ap.add_argument("--cost-bps", type=float, default=DEFAULT_COST_BPS)
@@ -396,17 +441,18 @@ def main() -> int:
         print(f"ספים שנדרסו: {thresholds}")
     print()
     result = run(tickers, args.start, args.end, args.month, args.day,
-                 args.cost_bps, args.max_names, thresholds=thresholds)
+                 args.cost_bps, args.max_names, thresholds=thresholds,
+                 freq=args.freq)
     result["thresholds"] = thresholds or "ברירת מחדל"
 
     print("\n" + "=" * 60)
     print(f"תשואה שנתית ממוצעת, התיק:  {result['portfolio_cagr']*100:+.2f}%")
     print(f"תשואה שנתית ממוצעת, היקום: {result['benchmark_cagr']*100:+.2f}%")
     print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
-    print(f"שנים שבהן היכה את היקום:   {result['years_beating_benchmark']}")
+    print(f"תקופות שבהן היכה את היקום: {result['years_beating_benchmark']}")
     print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
     if result.get("years_in_cash"):
-        print(f"\n[שים לב] ב-{result['years_in_cash']} מתוך {result['years']} התקופות "
+        print(f"\n[שים לב] ב-{result['years_in_cash']} מתוך {result['periods_count']} התקופות "
               "אף מניה לא עברה את המסך, והתיק ישב במזומן.\n"
               "        תשואת התיק כוללת אותן כאפס. אם זה רוב התקופות, המספר\n"
               "        למעלה מתאר בעיקר את זה ולא את איכות הבחירה.")

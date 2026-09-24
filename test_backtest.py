@@ -122,11 +122,37 @@ def test_summary_compounds_and_counts():
          "benchmark": -0.05, "excess": -0.05, "n_held": 10, "n_passed": 11, "names": []},
     ]
     s = bt.summarise(periods, 400)
-    # (1.20 * 0.90) ^ (1/2) - 1
-    assert abs(s["portfolio_cagr"] - ((1.2 * 0.9) ** 0.5 - 1)) < 1e-4
+    # שנתיים בדיוק: (1.20 * 0.90) ^ (1/2) - 1
+    assert abs(s["portfolio_cagr"] - ((1.2 * 0.9) ** 0.5 - 1)) < 1e-3, s["portfolio_cagr"]
     assert s["years_beating_benchmark"] == "1/2"
-    assert s["worst_year"] == -0.10
-    assert s["best_year"] == 0.20
+    assert s["periods_count"] == 2
+    assert s["worst_period"] == -0.10
+    assert s["best_period"] == 0.20
+
+
+def test_annualising_uses_elapsed_time_not_period_count():
+    """ארבעה רבעונים של 5% הם שנה אחת של ~21.5%, לא ארבע שנים."""
+    qs = [
+        {"buy": "2020-01-01", "sell": "2020-04-01", "portfolio": 0.05,
+         "benchmark": 0.05, "excess": 0.0, "n_held": 5, "n_passed": 5, "names": []},
+        {"buy": "2020-04-01", "sell": "2020-07-01", "portfolio": 0.05,
+         "benchmark": 0.05, "excess": 0.0, "n_held": 5, "n_passed": 5, "names": []},
+        {"buy": "2020-07-01", "sell": "2020-10-01", "portfolio": 0.05,
+         "benchmark": 0.05, "excess": 0.0, "n_held": 5, "n_passed": 5, "names": []},
+        {"buy": "2020-10-01", "sell": "2021-01-01", "portfolio": 0.05,
+         "benchmark": 0.05, "excess": 0.0, "n_held": 5, "n_passed": 5, "names": []},
+    ]
+    s = bt.summarise(qs, 100)
+    assert s["periods_count"] == 4
+    assert abs(s["years"] - 1.0) < 0.02, s["years"]
+    assert abs(s["portfolio_cagr"] - (1.05 ** 4 - 1)) < 1e-3, s["portfolio_cagr"]
+
+
+def test_quarterly_dates_are_three_months_apart():
+    ds = bt.rebalance_dates(2020, 2021, 3, 31, "quarterly")
+    assert len(ds) == 8, ds
+    gaps = [(b - a).days for a, b in zip(ds, ds[1:])]
+    assert all(85 <= g <= 95 for g in gaps), gaps
 
 
 def test_rebalance_dates():
