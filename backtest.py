@@ -254,6 +254,9 @@ def run(tickers: List[str], start_year: int, end_year: int,
         held = picked[:max_names]
 
         cost = 2 * cost_bps / 10_000.0
+        # תקופה שבה אף מניה לא עברה את המסך היא ישיבה במזומן, לא תשואת אפס
+        # של תיק. ההבדל חשוב: אם חצי מהתקופות ריקות, ממוצע התשואה נראה נורא
+        # ומתאר משהו אחר לגמרי ממה שנדמה. נספר ומדווח בנפרד.
         port = (sum(r["ret"] for r in held) / len(held) - cost) if held else 0.0
         bench = sum(universe_returns) / len(universe_returns) if universe_returns else 0.0
 
@@ -287,15 +290,18 @@ def summarise(periods: List[dict], n_universe: int) -> dict:
             total *= (1 + p[key])
         return total ** (1 / len(periods)) - 1
 
-    wins = sum(1 for p in periods if p["excess"] > 0)
+    invested = [p for p in periods if p["n_held"] > 0]
+    wins = sum(1 for p in invested if p["excess"] > 0)
     return {
         "periods": periods,
         "years": len(periods),
+        "years_invested": len(invested),
+        "years_in_cash": len(periods) - len(invested),
         "universe_size": n_universe,
         "portfolio_cagr": round(compound("portfolio"), 4),
         "benchmark_cagr": round(compound("benchmark"), 4),
         "excess_cagr": round(compound("portfolio") - compound("benchmark"), 4),
-        "years_beating_benchmark": f"{wins}/{len(periods)}",
+        "years_beating_benchmark": f"{wins}/{len(invested)}" if invested else "אין תקופות מושקעות",
         "avg_names_held": round(sum(p["n_held"] for p in periods) / len(periods), 1),
         "worst_year": min(p["portfolio"] for p in periods),
         "best_year": max(p["portfolio"] for p in periods),
@@ -344,6 +350,11 @@ def main() -> int:
     print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
     print(f"שנים שבהן היכה את היקום:   {result['years_beating_benchmark']}")
     print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
+    if result.get("years_in_cash"):
+        print(f"\n[שים לב] ב-{result['years_in_cash']} מתוך {result['years']} התקופות "
+              "אף מניה לא עברה את המסך, והתיק ישב במזומן.\n"
+              "        תשואת התיק כוללת אותן כאפס. אם זה רוב התקופות, המספר\n"
+              "        למעלה מתאר בעיקר את זה ולא את איכות הבחירה.")
     cov = result.get("coverage", {})
     if cov:
         print(f"\nכיסוי: {cov['with_prices']}/{cov['tickers']} עם מחירים, "
