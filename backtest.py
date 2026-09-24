@@ -121,7 +121,25 @@ def passes_screen(m: dict) -> tuple:
 # ---------------------------------------------------------------------------
 
 def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
-    """סגירות מתואמות יומיות לכל היקום, בהורדה אחת."""
+    """סגירות מתואמות יומיות לכל היקום, בהורדה אחת.
+
+    כשיש מפתח Alpaca משתמשים בו, מפני שהוא ממשק אמיתי ולא גירוד אתר. אחרת
+    נופלים ל-yfinance, שעובד אבל נוטה להחזיר עמודות חסרות בהורדות גדולות.
+    """
+    try:
+        import alpaca_prices
+        if alpaca_prices.available():
+            print("מושך מחירים מ-Alpaca...", flush=True)
+            close = alpaca_prices.daily_closes(tickers, start, end, quiet=False)
+            if not close.empty:
+                missing = len(tickers) - close.shape[1]
+                if missing > 0:
+                    print(f"  {missing} סימולים לא חזרו מ-Alpaca", flush=True)
+                return close
+            print("  Alpaca לא החזיר נתונים, ממשיכים עם yahoo", flush=True)
+    except ImportError:
+        pass
+
     import yfinance as yf
     data = yf.download(tickers, start=start.isoformat(), end=end.isoformat(),
                        auto_adjust=True, progress=False, group_by="column",

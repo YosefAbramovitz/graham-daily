@@ -108,10 +108,22 @@ def current_prices(tickers) -> dict:
     """מחיר אחרון לכל סימול. שגיאה במניה אחת לא מפילה את השאר."""
     prices = {}
     try:
+        import alpaca_prices
+        if alpaca_prices.available():
+            prices = alpaca_prices.last_prices(tickers)
+            if len(prices) == len(set(tickers)):
+                return prices
+    except ImportError:
+        pass
+
+    try:
         import yfinance as yf
     except ImportError:
         return prices
+    # רק מה ש-Alpaca לא כיסה, כדי לא לדרוס מחיר טוב במחיר פחות טוב
     for tk in tickers:
+        if tk in prices:
+            continue
         try:
             hist = yf.Ticker(tk).history(period="5d", interval="1d", auto_adjust=False)
             if hist is not None and not hist.empty:

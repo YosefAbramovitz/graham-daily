@@ -53,9 +53,29 @@
 כשה-SEC לא זמינה או חסר בה שדה, הסורק נופל חזרה ל-Yahoo Finance. עמודת
 `data_source` אומרת לכל מניה מאיפה הגיעו הנתונים.
 
-**להגדיר לפני ההרצה הראשונה:** ה-SEC דורשת כתובת יצירת קשר בכותרת הבקשה. יש
-להוסיף אותה כסוד במאגר בשם `SEC_USER_AGENT`, בפורמט
-`שם-הפרויקט your@email.com`. בלי זה הבקשות עלולות להיחסם.
+### מחירים
+
+ברירת המחדל היא Yahoo Finance. כשמוגדר מפתח Alpaca, המחירים מגיעים משם:
+נרות יומיים מתואמים לפיצולים ולדיבידנדים, עד מאה סימולים בבקשה, עם עימוד
+מסודר. yfinance הוא מגרד של אתר ולא ממשק, והוא נוטה להחזיר עמודות חסרות
+בהורדות גדולות — מה שהופך אותו למקור הכשל העיקרי בבדיקה לאחור.
+
+בחשבון החינמי של Alpaca הנתונים ההיסטוריים מתחילים בסביבות 2016, ולכן בדיקה
+לאחור שמתחילה לפני כן תקבל שורות חסרות בשנים הראשונות.
+
+### סודות להגדיר במאגר
+
+Settings → Secrets and variables → Actions → New repository secret:
+
+| שם הסוד | לְמה | חובה |
+|---|---|---|
+| `SEC_USER_AGENT` | ה-SEC דורשת כתובת יצירת קשר בכותרת. בפורמט `graham-daily your@email.com` | מומלץ מאוד |
+| `ALPACA_API_KEY_ID` | מחירים מ-Alpaca | לא |
+| `ALPACA_API_SECRET_KEY` | מחירים מ-Alpaca | לא |
+
+בלי `SEC_USER_AGENT` הבקשות ל-SEC עלולות להיחסם. בלי מפתחות Alpaca הכל עובד,
+פשוט על Yahoo. שום מפתח אינו נשמר בקוד או בקובץ — הקוד קורא אותם ממשתני סביבה
+בלבד.
 
 ## הבדיקה לאחור
 
@@ -146,6 +166,7 @@ KO,2026-03-14,58.20,100,
 | `quality_screener.py` | פוסל ומדרג בתוך הענף, על עוברי גראהם בלבד |
 | `tech_screener.py` | שכבת התזמון על מה ששרד את שלב האיכות |
 | `build_tech_page.py` | בונה את `docs/technical.html` |
+| `alpaca_prices.py` | מחירים מ-Alpaca, כשיש מפתח |
 | `positions.py` | כלל המכירה על הפוזיציות הפתוחות |
 | `backtest.py` | בדיקה לאחור, בלי הצצה קדימה |
 
@@ -168,6 +189,9 @@ GitHub מריץ cron לפי UTC בלבד, ושעון ישראל זז בין UTC+
 ```bash
 pip install -r requirements.txt
 export SEC_USER_AGENT="graham-daily your@email.com"
+# לא חובה:
+export ALPACA_API_KEY_ID="..."
+export ALPACA_API_SECRET_KEY="..."
 
 # השלב הערכי
 python graham_screener.py --universe sp1500 --out results.csv
