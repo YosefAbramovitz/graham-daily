@@ -81,5 +81,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add results.csv docs/index.html docs/enterprising.html
-          git diff --staged --quiet || git commit -m "Daily Graham screen"
-          git push || echo "nothing to push"
+          if git diff --staged --quiet; then
+            echo "אין שינוי, אין מה לשמור"
+            exit 0
+          fi
+          git commit -m "Daily Graham screen"
+          # דחיפה עם ניסיונות חוזרים. בלי זה, commit שנוחת במאגר בזמן שהסריקה
+          # רצה דוחה את הדחיפה, והתוצאה של ריצה שלמה נעלמת בלי שאיש ישים לב.
+          for attempt in 1 2 3; do
+            if git pull --rebase --autostash origin main && git push; then
+              echo "נשמר בניסיון $attempt"
+              exit 0
+            fi
+            echo "ניסיון $attempt נכשל, מנסה שוב"
+            sleep 5
+          done
+          echo "לא הצלחתי לדחוף אחרי שלושה ניסיונות" >&2
+          exit 1
