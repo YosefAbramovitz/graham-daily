@@ -240,5 +240,6 @@
     "with_prices": 402,
     "with_facts": 503,
     "unmapped": 0
-  }
+  },
+  "thresholds": "ברירת מחדל"
 }
