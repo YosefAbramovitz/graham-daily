@@ -87,6 +87,11 @@ MIN_GROSS_PROFITABILITY = 0.20  # רווח גולמי של 20% מסך הנכסי
 MIN_NET_PAYOUT_YIELD = 0.02   # החזר הון של 2%, מחליף את מבחן 20 שנות הדיבידנד
 MAX_NET_DEBT_TO_EBITDA = 3.0  # מחליף את היחס השוטף כמבחן איתנות
 
+# --- מסנני היגיינה ---
+MIN_DOLLAR_VOLUME = 2_000_000    # מחזור יומי ממוצע בדולרים
+EARNINGS_BLACKOUT_DAYS = 5       # אין כניסה כשהדוח מעבר לפינה
+MAX_ACCRUALS = 0.10              # צבירות מעל 10% מהנכסים: איכות רווח ירודה
+
 # רשימת גיבוי אם אי אפשר למשוך את רשימת ה-S&P 500 מוויקיפדיה (למשל: אין רשת)
 FALLBACK_LARGE_CAPS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "KO", "PEP", "JNJ", "PG", "XOM", "CVX",
@@ -136,6 +141,14 @@ class ScreenResult:
     net_debt_to_ebitda: Optional[float] = None
     measurable: bool = True                      # האם המסך בכלל חל על החברה
 
+    # --- איכות הנתונים ---
+    data_source: str = "yahoo"                   # yahoo / sec / mixed
+    sec_fields: int = 0                          # כמה שדות הגיעו מדוחות ה-SEC
+    accruals: Optional[float] = None             # צבירות מנורמלות (Sloan 1996)
+    dollar_volume: Optional[float] = None        # מחזור יומי ממוצע בדולרים
+    next_earnings: Optional[str] = None          # תאריך הדוח הקרוב, אם ידוע
+    share_class_of: Optional[str] = None         # הסימול הראשי, כשיש כמה סדרות
+
     def as_row(self) -> dict:
         row = {
             "ticker": self.ticker,
@@ -171,6 +184,12 @@ class ScreenResult:
         row["net_payout_yield"] = self.net_payout_yield
         row["net_debt_to_ebitda"] = self.net_debt_to_ebitda
         row["measurable"] = self.measurable
+        row["data_source"] = self.data_source
+        row["sec_fields"] = self.sec_fields
+        row["accruals"] = self.accruals
+        row["dollar_volume"] = self.dollar_volume
+        row["next_earnings"] = self.next_earnings
+        row["share_class_of"] = self.share_class_of
         row.update({f"crit_{k}": v for k, v in self.checks.items()})
         row.update({f"ent_{k}": v for k, v in self.checks_ent.items()})
         row.update({f"f_{k}": v for k, v in self.fscore_checks.items()})
@@ -411,6 +430,138 @@ def _sane_ratio(v, lo, hi):
     return v if lo <= v <= hi else None
 
 
+# ---------------------------------------------------------------------------
+# שכבת נתוני ה-SEC
+# ---------------------------------------------------------------------------
+# מילון שממולא פעם אחת בתחילת הריצה: סימול -> שורת נתונים מדוחות ה-SEC.
+# כשהוא ריק, הסורק עובד בדיוק כמו קודם על נתוני yahoo בלבד.
+
+SEC_DATA: dict = {}
+
+
+def load_sec_data(tickers, quiet: bool = False) -> dict:
+    """מושך תמונת מצב מדוחות ה-SEC לכל היקום, בבקשה אחת לכל מושג חשבונאי."""
+    global SEC_DATA
+    try:
+        import sec_frames
+    except ImportError:
+        return {}
+    try:
+        if not quiet:
+            print("מושך נתונים מדוחות ה-SEC...", flush=True)
+        df = sec_frames.snapshot_for(tickers, progress=not quiet)
+    except Exception as exc:  # noqa: BLE001
+        if not quiet:
+            print(f"  שכבת ה-SEC לא זמינה ({type(exc).__name__}), ממשיכים עם yahoo", flush=True)
+        return {}
+    SEC_DATA = {
+        sym: {k: v for k, v in row.items() if v == v and v is not None}
+        for sym, row in df.to_dict(orient="index").items()
+    }
+    if not quiet:
+        print(f"  התקבלו נתונים ל-{len(SEC_DATA)} מניות\n", flush=True)
+    return SEC_DATA
+
+
+def _sum(row: dict, *fields) -> Optional[float]:
+    """סכום של שדות, ובלבד שלפחות אחד מהם קיים. חסר נספר כאפס."""
+    vals = [row.get(f) for f in fields]
+    present = [v for v in vals if v is not None]
+    if not present:
+        return None
+    return float(sum(present))
+
+
+def apply_sec(res: ScreenResult, market_cap: Optional[float]) -> None:
+    """דורס את נתוני yahoo בנתוני ה-SEC, בכל שדה שקיים שם.
+
+    ה-SEC היא המקור הרשמי: אלה המספרים שהחברה הגישה, בתגיות תקניות, בלי
+    שכבת הפרשנות של ספק נתונים חינמי. איפה שאין — נשאר מה שהיה.
+    """
+    row = SEC_DATA.get(res.ticker.strip().upper())
+    if not row:
+        return
+
+    used = 0
+
+    def take(field):
+        nonlocal used
+        val = row.get(field)
+        if val is None:
+            return None
+        used += 1
+        return float(val)
+
+    revenue = take("revenue")
+    assets = take("assets")
+    ebit = take("ebit")
+    gross = take("gross_profit")
+    cogs = take("cogs")
+    cash = take("cash")
+    sti = take("short_term_investments")
+    depreciation = take("depreciation")
+    cfo = take("cfo")
+    net_income = take("net_income")
+    equity = take("equity")
+    ca = take("assets_current")
+    cl = take("liabilities_current")
+    eps = take("eps_diluted") or take("eps_basic")
+    shares = take("shares_outstanding")
+
+    debt = _sum(row, "debt_long", "debt_short")
+    liquid = (cash or 0.0) + (sti or 0.0)
+
+    if revenue is not None:
+        res.revenue = revenue
+    if assets is not None:
+        res.total_assets = assets
+    if ebit is not None:
+        res.ebit = ebit
+    if debt is not None:
+        res.total_debt = debt
+    if ca is not None and cl:
+        res.current_ratio = ca / cl
+        res.net_current_assets = ca - cl
+    if eps is not None:
+        res.eps_ttm = eps
+    if equity is not None and shares:
+        res.book_value_per_share = equity / shares
+
+    # שווי פעילות: שווי שוק ועוד חוב נטו. עדיף על השדה של yahoo, שלעתים
+    # קרובות חסר או מעודכן לפי מאזן ישן.
+    if market_cap and debt is not None:
+        res.enterprise_value = market_cap + debt - liquid
+    if res.ebit and res.enterprise_value and res.enterprise_value > 0:
+        res.ebit_ev = res.ebit / res.enterprise_value
+
+    # רווח גולמי: מדווח אם יש, אחרת הכנסות פחות עלות המכר
+    if gross is None and revenue is not None and cogs is not None:
+        gross = revenue - cogs
+    if gross is not None and res.total_assets:
+        res.gross_profitability = gross / res.total_assets
+
+    # החזר הון נטו. בתגיות ה-SEC כל השלושה מדווחים כמספרים חיוביים.
+    payout = _sum(row, "dividends_paid", "buybacks")
+    if payout is not None and market_cap:
+        issued = row.get("stock_issued") or 0.0
+        res.net_payout_yield = (payout - float(issued)) / market_cap
+
+    # חוב נטו חלקי רווח תפעולי בתוספת פחת
+    if ebit is not None and depreciation is not None and debt is not None:
+        ebitda = ebit + depreciation
+        if ebitda > 0:
+            res.net_debt_to_ebitda = (debt - liquid) / ebitda
+
+    # צבירות לפי Hribar & Collins (2002): הפער בין הרווח החשבונאי לתזרים
+    # התפעולי, חלקי סך הנכסים. גרסת תזרים המזומנים מדויקת יותר מהגרסה
+    # המאזנית המקורית של סלואן, מפני שהיא חסינה לרכישות ולמכירת פעילות.
+    if net_income is not None and cfo is not None and res.total_assets:
+        res.accruals = (net_income - cfo) / res.total_assets
+
+    res.sec_fields = used
+    res.data_source = "sec" if used >= 8 else "mixed"
+
+
 def screen_ticker(ticker: str, mode: str = "defensive",
                    min_revenue: float = MIN_REVENUE_INDUSTRIAL,
                    min_assets_utility: float = MIN_ASSETS_UTILITY) -> ScreenResult:
@@ -561,6 +712,34 @@ def screen_ticker(ticker: str, mode: str = "defensive",
         if ebitda and ebitda > 0 and res.total_debt is not None:
             res.net_debt_to_ebitda = (res.total_debt - (cash or 0.0)) / ebitda
 
+        # --- החלפת נתוני yahoo בנתוני ה-SEC, איפה שיש ---
+        try:
+            apply_sec(res, market_cap)
+        except Exception:
+            pass
+
+        # --- נזילות: מחזור יומי ממוצע בדולרים ---
+        # מניה שנסחרת דליל היא גם זו שהנתונים עליה הכי גרועים, וגם זו שבה
+        # פער הקנייה-מכירה אוכל את התשואה. רצפה כאן חוסכת בעיות בהמשך.
+        try:
+            vol = info.get("averageDailyVolume3Month") or info.get("averageVolume")
+            if vol and res.price:
+                res.dollar_volume = float(vol) * float(res.price)
+        except Exception:
+            pass
+
+        # --- מועד הדוח הקרוב ---
+        try:
+            cal = getattr(t, "calendar", None)
+            if isinstance(cal, dict):
+                dates = cal.get("Earnings Date") or []
+                if dates:
+                    res.next_earnings = str(dates[0])[:10]
+            elif cal is not None and hasattr(cal, "loc") and "Earnings Date" in getattr(cal, "index", []):
+                res.next_earnings = str(cal.loc["Earnings Date"].iloc[0])[:10]
+        except Exception:
+            pass
+
         # ================= המסך המודרני (מחליף את פרק 14) =================
         # שלושת המדדים המאזניים של גראהם הוחלפו. הפילוסופיה נשארה: קודם
         # בטיחות, אחר כך זול. רק כלי המדידה השתנו, מפני שמכפיל ההון מניח
@@ -655,6 +834,49 @@ def screen_ticker(ticker: str, mode: str = "defensive",
     return res
 
 
+def mark_share_classes(df: pd.DataFrame) -> pd.DataFrame:
+    """מסמן סדרות מניות משניות של אותו מנפיק.
+
+    GOOG ו-GOOGL הן אותה חברה, ואם שתיהן עוברות את המסך הרשימה מציגה אותה
+    הזדמנות פעמיים ומי שיקנה את שתיהן יחשוב שפיזר. מספר ה-CIK של ה-SEC מזהה
+    מנפיק, ולכן הוא הדרך הנקייה לזהות את זה. הסדרה הנזילה ביותר נחשבת
+    הראשית, והשאר מסומנות — לא נמחקות, כדי שאפשר יהיה לראות מה קרה.
+    """
+    if df.empty or "ticker" not in df.columns:
+        return df
+    try:
+        from sec_facts import ticker_to_cik
+        mapping = ticker_to_cik()
+    except Exception:  # noqa: BLE001
+        return df
+    if not mapping:
+        return df
+
+    df = df.copy()
+    if "share_class_of" not in df.columns:
+        df["share_class_of"] = None
+
+    groups: dict = {}
+    for idx, tk in df["ticker"].items():
+        cik = mapping.get(str(tk).strip().upper())
+        if cik is not None:
+            groups.setdefault(int(cik), []).append(idx)
+
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+
+        def liquidity(i):
+            v = df.at[i, "dollar_volume"] if "dollar_volume" in df.columns else None
+            return float(v) if v == v and v is not None else -1.0
+
+        primary = max(members, key=lambda i: (liquidity(i), -len(str(df.at[i, "ticker"]))))
+        for i in members:
+            if i != primary:
+                df.at[i, "share_class_of"] = df.at[primary, "ticker"]
+    return df
+
+
 def main():
     parser = argparse.ArgumentParser(description="סורק מניות לפי הקריטריונים של בנג'מין גראהם")
     parser.add_argument("--tickers", type=str, default=None,
@@ -669,6 +891,8 @@ def main():
                          help="סף מכירות שנתיות לחברת תעשייה (קריטריון 1, מגן בלבד)")
     parser.add_argument("--out", type=str, default="graham_results.csv", help="שם קובץ הפלט")
     parser.add_argument("--sleep", type=float, default=0.5, help="השהיה בשניות בין בקשות (מניעת חסימת קצב)")
+    parser.add_argument("--no-sec", action="store_true",
+                         help="לא למשוך נתונים מדוחות ה-SEC, לעבוד על yahoo בלבד")
     args = parser.parse_args()
 
     if args.tickers:
@@ -685,6 +909,9 @@ def main():
         print(f"[list-only] {len(tickers)} טיקרים. עשרת הראשונים: {', '.join(tickers[:10])}")
         return 0
 
+    if not args.no_sec:
+        load_sec_data(tickers)
+
     print(f"[info] סורק {len(tickers)} טיקרים במצב '{args.mode}'...")
     results = []
     for i, tk in enumerate(tickers, 1):
@@ -700,10 +927,18 @@ def main():
         time.sleep(args.sleep)
 
     df = pd.DataFrame(results)
+    df = mark_share_classes(df)
     if "score" in df.columns:
         df = df.sort_values(["score", "ticker"], ascending=[False, True])
     df.to_csv(args.out, index=False, encoding="utf-8-sig")
     print(f"\n[done] הפלט המלא נשמר ל-{args.out}")
+
+    if "data_source" in df.columns:
+        from_sec = int((df["data_source"] == "sec").sum())
+        print(f"[info] {from_sec} מתוך {len(df)} מניות נסרקו על נתוני SEC מלאים")
+    dupes = df["share_class_of"].notna().sum() if "share_class_of" in df.columns else 0
+    if dupes:
+        print(f"[info] {dupes} סדרות מניות משניות סומנו ולא ייספרו פעמיים")
 
     if "score" in df.columns and "max_score" in df.columns and not df.empty:
         top = df[df["error"].isna()].head(15)

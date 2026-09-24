@@ -25,6 +25,7 @@ import math
 import os
 import sys
 import time
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,7 @@ BEAR_BANDS = {"support_lo": 20.0, "support_hi": 30.0,
 
 # בראון מקבלת ירידה עד 38-39 בזמן מעבר משוק דובי לשורי בלי לפסול את המעבר.
 TRANSITION_FLOOR = 38.0
+EARNINGS_BLACKOUT_DAYS = 5   # אין כניסה כשהדוח מעבר לפינה
 
 RSI_PERIOD = 14          # בראון משתמשת ב-14 בכל גרפי המניות שבספר
 PIVOT_WINDOW = 5         # כמה נרות מכל צד מגדירים שיא או שפל מקומי ב-RSI
@@ -595,18 +597,59 @@ def classify_signal(row: dict):
     mom_positive = mom is not None and mom > 0
 
     if broke:
-        return "שבר את תעלת השורי", 5, "המתנה"
-    if at_support and mom_positive:
-        return "אזור כניסה", 1, "כניסה"
-    if at_support:
-        return "בתמיכה, מומנטום שלילי", 3, "המתנה"
-    if regime == "bull" and mom_positive:
-        return "מגמה תקינה", 2, "החזקה"
-    if regime == "bull":
-        return "שורי אך מומנטום שלילי", 4, "החזקה"
-    if regime == "transition":
-        return "מעבר, לא ברור", 7, "המתנה"
-    return "מגמה נגדית", 8, "המתנה"
+        signal = ("שבר את תעלת השורי", 5, "המתנה")
+    elif at_support and mom_positive:
+        signal = ("אזור כניסה", 1, "כניסה")
+    elif at_support:
+        signal = ("בתמיכה, מומנטום שלילי", 3, "המתנה")
+    elif regime == "bull" and mom_positive:
+        signal = ("מגמה תקינה", 2, "החזקה")
+    elif regime == "bull":
+        signal = ("שורי אך מומנטום שלילי", 4, "החזקה")
+    elif regime == "transition":
+        signal = ("מעבר, לא ברור", 7, "המתנה")
+    else:
+        signal = ("מגמה נגדית", 8, "המתנה")
+
+    return _block_entry(signal, row)
+
+
+def _block_entry(signal, row: dict):
+    """שני חסמים שמורידים איתות כניסה להמתנה, בלי לשנות דבר אחר.
+
+    נזילות: אפשר שהתמונה מושלמת, אבל אם המניה נסחרת בכמה מאות אלפי דולרים
+    ביום, פער הקנייה-מכירה יבלע חלק מהתשואה והיציאה תהיה קשה בדיוק ביום
+    שבו תרצה לצאת.
+
+    דוחות: כניסה יומיים לפני פרסום דוח אינה החלטה טכנית אלא הימור על
+    תוצאה שאיש אינו יודע. המתנה של כמה ימים לא עולה כמעט כלום כשהאופק
+    הוא שנתיים.
+    """
+    label, order, kind = signal
+    if kind != "כניסה":
+        return signal
+
+    if str(_clean(row.get("liquidity_flag", ""))).strip():
+        return "כניסה, אך דליל למסחר", 3, "המתנה"
+
+    days = _days_to_earnings(row.get("next_earnings"))
+    if days is not None and 0 <= days <= EARNINGS_BLACKOUT_DAYS:
+        return f"כניסה אחרי הדוח ({days} ימים)", 3, "המתנה"
+
+    return signal
+
+
+def _days_to_earnings(value):
+    text = str(_clean(value) or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            when = datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+        return (when - date.today()).days
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -707,7 +750,10 @@ def main():
         # שדות שלב האיכות, אם הקלט הגיע ממנו
         for field in ("quality_score", "beneish_m", "beneish_flag", "altman_z",
                       "altman_flag", "ebit_ev", "gross_profitability",
-                      "momentum_12_1", "net_payout_yield", "red_flag"):
+                      "momentum_12_1", "net_payout_yield", "red_flag",
+                      "accruals", "accruals_flag", "liquidity_flag",
+                      "dollar_volume", "next_earnings", "rank_bucket",
+                      "rank_basis", "data_source"):
             row[field] = _clean(src.get(field, ""))
 
         # הסיווג נקבע מחדש אחרי המיזוג, כדי שדגל אדום יוכל לפסול איתות כניסה

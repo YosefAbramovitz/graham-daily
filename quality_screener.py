@@ -267,6 +267,14 @@ def _rank_metrics(out: dict, tk, bs, inc, cf, market_cap, ev) -> dict:
 
     npy = net_payout_yield(cf, market_cap)
     out["net_payout_yield"] = round(npy, 4) if npy is not None else ""
+
+    # צבירות, בגרסת תזרים המזומנים של Hribar & Collins (2002): הרווח פחות
+    # התזרים התפעולי, חלקי סך הנכסים. משמש רק כגיבוי כשאין נתון מה-SEC.
+    ni = pick(inc, NET_INCOME)
+    ocf = pick(cf, CFO)
+    ta = pick(bs, TOTAL_ASSETS)
+    out["accruals_yf"] = (round((ni - ocf) / ta, 4)
+                          if (ni is not None and ocf is not None and ta) else "")
     return out
 
 
@@ -340,23 +348,113 @@ def analyse(ticker: str, company_type: str) -> dict:
     return out
 
 
-def add_composite(df: pd.DataFrame) -> pd.DataFrame:
+MIN_SECTOR_SIZE = 5       # מתחת לזה, דירוג בתוך הענף חסר משמעות
+MIN_DOLLAR_VOLUME = 2_000_000
+MAX_ACCRUALS = 0.10
+
+
+def _sector_buckets(df: pd.DataFrame) -> pd.Series:
+    """לאיזה ענף כל שורה שייכת לצורך הדירוג. ענפים קטנים מדי מאוגדים יחד."""
+    if "sector" in df.columns:
+        sector = df["sector"].fillna("").astype(str).str.strip()
+    else:
+        sector = pd.Series([""] * len(df), index=df.index)
+    counts = sector.value_counts()
+    small = sector.map(counts).fillna(0) < MIN_SECTOR_SIZE
+    return sector.mask(small | (sector == ""), "כלל השוק")
+
+
+def add_composite(df: pd.DataFrame, by_sector: bool = True) -> pd.DataFrame:
     """
-    ציון מסכם: דירוג אחוזוני של כל אחד מארבעת המדדים בתוך הקבוצה שנבדקה,
-    וממוצע של הדירוגים. זהו דירוג יחסי בתוך הרשימה של היום ולא ציון מוחלט,
-    ולכן הוא משתנה מיום ליום גם בלי שמשהו בחברה השתנה.
+    ציון מסכם: דירוג אחוזוני של כל אחד מארבעת המדדים, וממוצע של הדירוגים.
+
+    הדירוג נעשה **בתוך הענף** ולא על פני כל הרשימה. הסיבה פשוטה: תשואת
+    רווח תפעולי של בנק ושל חברת תוכנה לא מדברות באותה שפה. כשמדרגים את
+    כולם יחד, הרשימה מתמלאת בענף אחד שבמקרה זול כרגע, והמשקיע חושב שבחר
+    מניות כשבעצם בחר ענף.
+
+    ענף שיש בו פחות מחמש מניות מאוגד ל"כלל השוק", כי דירוג אחוזוני בתוך
+    שתי מניות אומר רק "אחת מהן ראשונה".
     """
+    df = df.copy()
+    bucket = _sector_buckets(df) if by_sector else pd.Series(["כלל השוק"] * len(df),
+                                                             index=df.index)
     parts = []
+    used_sector = False
     for col in RANK_FIELDS:
+        if col not in df.columns:
+            continue
         vals = pd.to_numeric(df[col], errors="coerce")
         if vals.notna().sum() < 2:
             continue
-        parts.append(vals.rank(pct=True) * 100.0)
+        universe = vals.rank(pct=True) * 100.0
+        if by_sector:
+            per_sector = vals.groupby(bucket).rank(pct=True) * 100.0
+            # ענף שבו למדד הזה יש פחות משלושה ערכים חוזר לדירוג כלל-שוקי
+            enough = vals.notna().groupby(bucket).transform("sum") >= 3
+            ranked = per_sector.where(enough, universe)
+            used_sector = used_sector or bool(enough.any())
+        else:
+            ranked = universe
+        parts.append(ranked)
+
+    df["rank_bucket"] = bucket
+    df["rank_basis"] = "ענף" if used_sector else "כלל השוק"
     if not parts:
         df["quality_score"] = ""
         return df
     score = pd.concat(parts, axis=1).mean(axis=1, skipna=True)
     df["quality_score"] = score.round(0).astype("Int64").astype(str).replace("<NA>", "")
+    return df
+
+
+def finalise_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """מוסיף את שתי הבדיקות שצריכות את הטבלה כולה ולא מניה בודדת.
+
+    צבירות: הפער בין הרווח החשבונאי לתזרים התפעולי. סלואן (1996) הראה
+    שחברות שהרווח שלהן מגיע מצבירות ולא ממזומן נוטות לאכזב בשנה שאחריה.
+    זו בדיקה שמשלימה את בניש בדיוק במקום שבו הוא חלש: לא מניפולציה, אלא
+    חשבונאות אגרסיבית שהיא לגמרי חוקית.
+
+    נזילות: מניה שנסחרת דליל היא גם זו שהנתונים עליה הכי גרועים, וגם זו
+    שבה פער הקנייה-מכירה אוכל את התשואה.
+    """
+    df = df.copy()
+
+    # ערך מהדוחות הרשמיים קודם, ואם אין — מה שחושב מ-yahoo
+    primary = pd.to_numeric(df.get("accruals"), errors="coerce") if "accruals" in df.columns else None
+    fallback = pd.to_numeric(df.get("accruals_yf"), errors="coerce") if "accruals_yf" in df.columns else None
+    if primary is None and fallback is None:
+        acc = pd.Series([float("nan")] * len(df), index=df.index)
+    elif primary is None:
+        acc = fallback
+    elif fallback is None:
+        acc = primary
+    else:
+        acc = primary.fillna(fallback)
+    df["accruals"] = acc.round(4)
+
+    is_financial = df.get("company_type", pd.Series([""] * len(df), index=df.index)) == "financial"
+    bad_accruals = acc.notna() & (acc > MAX_ACCRUALS) & ~is_financial
+    df["accruals_flag"] = ""
+    df.loc[bad_accruals, "accruals_flag"] = "צבירות גבוהות"
+    df.loc[is_financial, "accruals_flag"] = "לא רלוונטי"
+
+    # מצטרף לדגל האדום הקיים, כדי ששלב התזמון יראה פסילה אחת מאוחדת
+    existing = df.get("red_flag", pd.Series([""] * len(df), index=df.index)).fillna("").astype(str)
+    df["red_flag"] = [
+        "; ".join(p for p in (e.strip(), "צבירות גבוהות" if b else "") if p)
+        for e, b in zip(existing, bad_accruals)
+    ]
+
+    vol = pd.to_numeric(df.get("dollar_volume"), errors="coerce") if "dollar_volume" in df.columns else None
+    if vol is None:
+        df["liquidity_flag"] = ""
+    else:
+        thin = vol.notna() & (vol < MIN_DOLLAR_VOLUME)
+        df["liquidity_flag"] = ""
+        df.loc[thin, "liquidity_flag"] = "נזילות נמוכה"
+
     return df
 
 
@@ -385,8 +483,17 @@ def main():
         pe_ = raw["score_ent"] >= raw["max_score_ent"]
         keep = (pd_ if args.mode == "defensive"
                 else pe_ if args.mode == "enterprising" else (pd_ | pe_))
-        base = raw[ok & keep.fillna(False)].copy()
+        # סדרת מניות משנית של מנפיק שכבר ברשימה לא נספרת פעמיים
+        if "share_class_of" in raw.columns:
+            primary = raw["share_class_of"].isna() | (
+                raw["share_class_of"].astype(str).str.strip().isin(["", "nan", "None"]))
+        else:
+            primary = pd.Series(True, index=raw.index)
+        base = raw[ok & keep.fillna(False) & primary].copy()
+        dropped = int((ok & keep.fillna(False) & ~primary).sum())
         print(f"נבחרו {len(base)} מניות שעברו את גראהם מתוך {len(raw)}.")
+        if dropped:
+            print(f"{dropped} סדרות מניות משניות הושמטו.")
 
     if base.empty:
         print("אין מניות לעיבוד.")
@@ -413,9 +520,15 @@ def main():
               f"EBIT/EV {res['ebit_ev']} | מומנטום {res['momentum_12_1']}")
         time.sleep(args.sleep)
 
-    out = add_composite(pd.DataFrame(rows))
+    out = finalise_flags(add_composite(pd.DataFrame(rows)))
     flagged = (out["red_flag"].astype(str).str.strip() != "").sum()
+    thin = (out["liquidity_flag"].astype(str).str.strip() != "").sum()
     print(f"\n{flagged} מניות קיבלו דגל אדום מתוך {len(out)}.")
+    if thin:
+        print(f"{thin} מניות סומנו כדלילות מדי למסחר.")
+    if "rank_basis" in out.columns and not out.empty:
+        buckets = out["rank_bucket"].nunique()
+        print(f"הדירוג נעשה בתוך {buckets} קבוצות ענפיות.")
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     out.to_csv(args.out, index=False)
     print(f"נכתבו {len(out)} שורות אל {args.out}")

@@ -126,6 +126,22 @@ input[type=search]:focus,select:focus,input[type=number]:focus{outline:2px solid
   font-family:"IBM Plex Mono",monospace; font-size:13.5px}
 .calc .calcnote{font-size:12px; color:var(--muted)}
 .tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
+.positions{background:var(--paper); border:1px solid var(--line); border-radius:14px;
+  box-shadow:var(--shadow); padding:18px 20px; margin:18px 0}
+.positions h2{margin:0 0 4px; font-size:17px}
+.positions .lead{margin:0 0 14px; color:var(--muted); font-size:13px; line-height:1.6}
+.positions table{width:100%; border-collapse:collapse; font-size:14px}
+.positions th{text-align:right; font-weight:600; color:var(--muted); font-size:12px;
+  padding:6px 10px; border-bottom:1px solid var(--line)}
+.positions td{padding:8px 10px; border-bottom:1px solid var(--line)}
+.positions tr:last-child td{border-bottom:none}
+.act{display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600}
+.act-sell{background:var(--bad-bg); color:var(--bad-ink)}
+.act-near{background:var(--warm-bg); color:var(--warm-ink)}
+.act-hold{background:var(--good-bg); color:var(--good-ink)}
+.act-none{background:var(--unknown-bg); color:var(--unknown-ink)}
+.gain-up{color:var(--good-ink); font-weight:600}
+.gain-down{color:var(--bad-ink); font-weight:600}
 table{border-collapse:collapse; width:100%; min-width:1180px}
 th,td{padding:10px 12px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; vertical-align:top}
 th{position:sticky; top:0; background:var(--paper); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; z-index:1}
@@ -168,6 +184,8 @@ footer a{color:var(--accent)}
 </header>
 
 <div class="stats">__STATS__</div>
+
+__POSITIONS__
 
 <details class="panel">
   <summary>מה מחושב כאן, ומה הספר אומר</summary>
@@ -414,10 +432,90 @@ render();
 """
 
 
+ACTION_CLASS = {
+    "מכירה": "act-sell",
+    "מתקרב ליעד": "act-near",
+    "מתקרב למועד": "act-near",
+    "החזקה": "act-hold",
+}
+
+POSITIONS_LEAD = (
+    "כלל המכירה של גראהם, מתוך ראיון שנתן ל-Medical Economics ב-1976: למכור "
+    "כשהרווח מגיע ל-50%, ואם לא הגיע — עד סוף השנה הקלנדרית השנייה שאחרי "
+    "הקנייה, מה שקורה קודם. הכלל נראה שרירותי, וזה העניין: הוא מונע משתי "
+    "הטעויות שהכי עולות כסף, להתאהב במניה שעלתה ולהחזיק לנצח במניה שלא זזה. "
+    "זו התראה בלבד, וההחלטה שלך."
+)
+
+
+def _fmt_pct(value):
+    try:
+        return f"{float(value) * 100:+.1f}%"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_money(value):
+    try:
+        return f"{float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def positions_section(path: str) -> str:
+    """טבלת הפוזיציות הפתוחות. בלי פוזיציות — אין מקטע בכלל."""
+    if not os.path.exists(path):
+        return ""
+    try:
+        df = pd.read_csv(path, keep_default_na=False)
+    except Exception:  # noqa: BLE001
+        return ""
+    if df.empty or "ticker" not in df.columns:
+        return ""
+
+    rows = []
+    for r in df.to_dict(orient="records"):
+        action = str(r.get("action", "")).strip()
+        cls = ACTION_CLASS.get(action, "act-none")
+        try:
+            gain_num = float(r.get("gain"))
+            gain_cls = "gain-up" if gain_num >= 0 else "gain-down"
+        except (TypeError, ValueError):
+            gain_cls = ""
+        rows.append(
+            "<tr>"
+            f"<td><b>{html.escape(str(r.get('ticker', '')))}</b></td>"
+            f"<td>{html.escape(str(r.get('entry_date', '') or '—'))}</td>"
+            f"<td>{_fmt_money(r.get('entry_price'))}</td>"
+            f"<td>{_fmt_money(r.get('price'))}</td>"
+            f"<td class=\"{gain_cls}\">{_fmt_pct(r.get('gain'))}</td>"
+            f"<td>{_fmt_money(r.get('target_price'))}</td>"
+            f"<td>{html.escape(str(r.get('deadline', '') or '—'))}</td>"
+            f"<td><span class=\"act {cls}\">{html.escape(action or '—')}</span></td>"
+            f"<td>{html.escape(str(r.get('reason', '')))}</td>"
+            "</tr>")
+
+    sells = sum(1 for r in df.to_dict(orient="records")
+                if str(r.get("action", "")).strip() == "מכירה")
+    headline = f"כלל המכירה · {len(rows)} פוזיציות"
+    if sells:
+        headline += f" · {sells} התראות מכירה"
+
+    return (
+        '<section class="positions">'
+        f"<h2>{html.escape(headline)}</h2>"
+        f'<p class="lead">{html.escape(POSITIONS_LEAD)}</p>'
+        "<table><thead><tr>"
+        "<th>סימול</th><th>תאריך כניסה</th><th>מחיר כניסה</th><th>מחיר נוכחי</th>"
+        "<th>רווח</th><th>יעד 50%</th><th>מועד אחרון</th><th>מה לעשות</th><th>למה</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></section>")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="infile", default="tech_results.csv")
     ap.add_argument("--out", default="docs/technical.html")
+    ap.add_argument("--positions", default="positions_status.csv")
     args = ap.parse_args()
 
     if os.path.exists(args.infile):
@@ -478,7 +576,8 @@ def main():
             .replace("__SIG_OPTS__", sig_opts)
             .replace("__STATS__", stats_html)
             .replace("__UPDATED__", updated)
-            .replace("__COUNT__", str(total)))
+            .replace("__COUNT__", str(total))
+            .replace("__POSITIONS__", positions_section(args.positions)))
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
