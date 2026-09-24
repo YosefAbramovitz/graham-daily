@@ -28,6 +28,14 @@ on:
         description: "כמה מניות מחזיקים בכל תקופה"
         required: false
         default: "30"
+      min_ebit_ev:
+        description: "סף תשואת הרווח התפעולי. ריק = 0.10"
+        required: false
+        default: ""
+      min_gross_profitability:
+        description: "סף הרווחיות הגולמית. ריק = 0.20"
+        required: false
+        default: ""
       commit:
         description: "לשמור את התוצאה במאגר"
         required: false
@@ -79,13 +87,18 @@ jobs:
           START: ${{ inputs.start || '2015' }}
           END: ${{ inputs.end || '2025' }}
           MAX_NAMES: ${{ inputs.max_names || '30' }}
+          MIN_EBIT_EV: ${{ inputs.min_ebit_ev }}
+          MIN_GP: ${{ inputs.min_gross_profitability }}
         run: |
+          EXTRA=""
+          [ -n "$MIN_EBIT_EV" ] && EXTRA="$EXTRA --min-ebit-ev $MIN_EBIT_EV"
+          [ -n "$MIN_GP" ] && EXTRA="$EXTRA --min-gross-profitability $MIN_GP"
           if [ -n "$TICKERS" ]; then
             python backtest.py --tickers "$TICKERS" --start "$START" --end "$END" \
-              --max-names "$MAX_NAMES" --out backtest_results.json
+              --max-names "$MAX_NAMES" $EXTRA --out backtest_results.json
           else
             python backtest.py --universe "$UNIVERSE" --start "$START" --end "$END" \
-              --max-names "$MAX_NAMES" --out backtest_results.json
+              --max-names "$MAX_NAMES" $EXTRA --out backtest_results.json
           fi
 
       - name: Upload the result
