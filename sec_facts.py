@@ -35,8 +35,18 @@ import requests
 USER_AGENT = os.environ.get("SEC_USER_AGENT", "graham-daily screener contact@example.com")
 REQUEST_GAP = 0.15  # שניות בין בקשות, כלומר כשש בשנייה — מתחת לתקרה בבטחה
 
-TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
+# המיפוי מסימול ל-CIK יושב על www.sec.gov, מארח אחר מזה שמגיש את הנתונים,
+# והוא נוטה לחסום בקשות בלי כותרת יצירת קשר תקינה. מנסים כמה כתובות.
+TICKERS_URLS = [
+    "https://www.sec.gov/files/company_tickers.json",
+    "https://www.sec.gov/files/company_tickers_exchange.json",
+    "https://data.sec.gov/files/company_tickers.json",
+]
 FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"
+
+# עותק שנשמר במאגר. כשהוא קיים הוא מנצח, מפני שהמיפוי כמעט לא משתנה ואין
+# טעם לתלות סריקה יומית בנקודת כשל שכבר הפילה אותנו פעם.
+BUNDLED_MAP = "cik_map.json"
 
 CACHE_DIR = Path(os.environ.get("SEC_CACHE_DIR", ".sec_cache"))
 
@@ -51,19 +61,26 @@ def _throttle() -> None:
     _last_request = time.monotonic()
 
 
+last_status = None   # קוד התגובה האחרון, לצורך הודעות שגיאה מובנות
+
+
 def _get(url: str, timeout: int = 30) -> Optional[dict]:
+    global last_status
     _throttle()
     try:
         r = requests.get(url, headers={"User-Agent": USER_AGENT,
                                        "Accept-Encoding": "gzip, deflate"},
                          timeout=timeout)
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        last_status = type(exc).__name__
         return None
+    last_status = r.status_code
     if r.status_code != 200:
         return None
     try:
         return r.json()
     except ValueError:
+        last_status = "לא JSON"
         return None
 
 
@@ -74,42 +91,118 @@ def _get(url: str, timeout: int = 30) -> Optional[dict]:
 _cik_cache: Optional[Dict[str, int]] = None
 
 
-def ticker_to_cik(refresh: bool = False) -> Dict[str, int]:
-    """סימול באותיות גדולות -> מספר CIK. נשמר בדיסק כי הוא כמעט לא משתנה."""
+def _parse_ticker_payload(raw) -> Dict[str, int]:
+    """שתי הכתובות מחזירות מבנים שונים. מנרמל את שניהם."""
+    mapping: Dict[str, int] = {}
+    if isinstance(raw, dict) and "fields" in raw and "data" in raw:
+        # company_tickers_exchange.json: כותרות ואז שורות
+        fields = [str(f).lower() for f in raw["fields"]]
+        try:
+            i_cik, i_tk = fields.index("cik"), fields.index("ticker")
+        except ValueError:
+            return mapping
+        for row in raw["data"]:
+            try:
+                sym = str(row[i_tk]).strip().upper()
+                if sym:
+                    mapping[sym] = int(row[i_cik])
+            except (IndexError, TypeError, ValueError):
+                continue
+        return mapping
+
+    if isinstance(raw, dict):
+        for entry in raw.values():
+            if not isinstance(entry, dict):
+                continue
+            sym = str(entry.get("ticker", "")).strip().upper()
+            cik = entry.get("cik_str", entry.get("cik"))
+            if sym and cik is not None:
+                try:
+                    mapping[sym] = int(cik)
+                except (TypeError, ValueError):
+                    continue
+    return mapping
+
+
+def ticker_to_cik(refresh: bool = False, quiet: bool = True) -> Dict[str, int]:
+    """סימול באותיות גדולות -> מספר CIK.
+
+    בלי המיפוי הזה כל שכבת ה-SEC חסרת ערך: אפשר למשוך את כל הנתונים של כל
+    החברות ואז לא לדעת איזו שורה שייכת לאיזו מניה. זה כבר קרה פעם אחת -
+    סריקה שלמה משכה 6,840 חברות ואז שמרה 1504 שורות של yahoo - ולכן כאן
+    מנסים כמה מקורות, ומדווחים בקול כשכולם נכשלים.
+    """
     global _cik_cache
     if _cik_cache is not None and not refresh:
         return _cik_cache
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    path = CACHE_DIR / "cik_map.json"
-    if path.exists() and not refresh:
+    cache = CACHE_DIR / "cik_map.json"
+
+    # 1. מטמון של הריצה הזאת
+    if cache.exists() and not refresh:
         try:
-            _cik_cache = {k: int(v) for k, v in json.loads(path.read_text()).items()}
-            return _cik_cache
+            _cik_cache = {k: int(v) for k, v in json.loads(cache.read_text()).items()}
+            if _cik_cache:
+                return _cik_cache
         except (ValueError, OSError):
             pass
 
-    raw = _get(TICKERS_URL)
-    if not raw:
+    # 2. עותק שנשמר במאגר
+    bundled = Path(BUNDLED_MAP)
+    if bundled.exists() and not refresh:
+        try:
+            _cik_cache = {k: int(v) for k, v in json.loads(bundled.read_text()).items()}
+            if _cik_cache:
+                if not quiet:
+                    print(f"  מיפוי CIK מהעותק שבמאגר: {len(_cik_cache)} סימולים", flush=True)
+                return _cik_cache
+        except (ValueError, OSError):
+            pass
+
+    # 3. מהרשת, לפי סדר הכתובות
+    mapping: Dict[str, int] = {}
+    statuses = []
+    for url in TICKERS_URLS:
+        raw = _get(url)
+        statuses.append(last_status)
+        if raw:
+            mapping = _parse_ticker_payload(raw)
+            if mapping:
+                if not quiet:
+                    print(f"  מיפוי CIK מ-{url}: {len(mapping)} סימולים", flush=True)
+                break
+        if not quiet:
+            print(f"  {url} -> {last_status}", flush=True)
+
+    if not mapping:
+        if not quiet:
+            print("  לא התקבל מיפוי CIK משום מקור.", flush=True)
+            if any(st in (403, 429) for st in statuses):
+                print("  ה-SEC דחתה את הבקשות. כמעט תמיד זו כותרת יצירת הקשר:\n"
+                      "  יש להגדיר SEC_USER_AGENT בפורמט 'graham-daily your@email.com'.",
+                      flush=True)
+            elif "@" not in USER_AGENT:
+                print("  ל-User-Agent אין כתובת דוא\"ל, וה-SEC דורשת אחת.\n"
+                      "  יש להגדיר SEC_USER_AGENT בפורמט 'graham-daily your@email.com'.",
+                      flush=True)
+            else:
+                print(f"  המארח אינו נגיש מכאן ({statuses[0]}). זה תקין בסביבה\n"
+                      "  חסומה, אבל בשרתי GitHub זה אמור לעבוד.", flush=True)
         _cik_cache = {}
         return _cik_cache
 
-    mapping: Dict[str, int] = {}
-    for entry in raw.values():
-        sym = str(entry.get("ticker", "")).strip().upper()
-        cik = entry.get("cik_str")
-        if sym and cik is not None:
-            mapping[sym] = int(cik)
-
-    # yfinance כותב BRK-B, ה-SEC כותבת BRK-B גם כן, אבל יש מקורות עם BRK.B.
+    # סימולים עם מקף נכתבים לפעמים עם נקודה במקורות אחרים
     for sym in list(mapping):
         if "-" in sym:
             mapping.setdefault(sym.replace("-", "."), mapping[sym])
 
-    try:
-        path.write_text(json.dumps(mapping))
-    except OSError:
-        pass
+    for target in (cache, bundled):
+        try:
+            target.write_text(json.dumps(mapping))
+        except OSError:
+            pass
+
     _cik_cache = mapping
     return mapping
 
@@ -444,3 +537,49 @@ def facts_for(ticker: str, use_cache: bool = True) -> Optional[Dict[str, List[di
 
 __all__ = ["CONCEPTS", "Fact", "annual_series", "as_of", "company_facts",
            "extract", "facts_for", "quarterly_series", "ticker_to_cik", "ttm"]
+
+
+def main() -> int:
+    """כלי אבחון קטן. ``--check`` אומר אם שכבת ה-SEC בכלל עובדת מכאן,
+    ו-``--refresh-map`` שומר את מיפוי ה-CIK לקובץ שנשמר במאגר, כדי שהסריקה
+    היומית לא תהיה תלויה בנקודת הכשל הזאת."""
+    import argparse
+    ap = argparse.ArgumentParser(description="בדיקה ותחזוקה של שכבת ה-SEC")
+    ap.add_argument("--check", action="store_true", help="בדוק שהמיפוי והנתונים נגישים")
+    ap.add_argument("--refresh-map", action="store_true", help="משוך ושמור את מיפוי ה-CIK")
+    ap.add_argument("--ticker", default="AAPL", help="סימול לבדיקה")
+    args = ap.parse_args()
+
+    print(f"User-Agent: {USER_AGENT}")
+    if "@" not in USER_AGENT:
+        print("אזהרה: אין כתובת דוא\"ל ב-User-Agent. ה-SEC חוסמת בקשות כאלה.")
+
+    mapping = ticker_to_cik(refresh=args.refresh_map, quiet=False)
+    print(f"מיפוי CIK: {len(mapping)} סימולים")
+    if not mapping:
+        return 1
+
+    if args.refresh_map:
+        print(f"נשמר ל-{BUNDLED_MAP}")
+
+    if args.check:
+        sym = args.ticker.strip().upper()
+        cik = mapping.get(sym)
+        print(f"{sym} -> CIK {cik}")
+        if cik is None:
+            return 1
+        compact = company_facts(cik, use_cache=False)
+        if not compact:
+            print(f"לא התקבלו דוחות ({last_status})")
+            return 1
+        snap = as_of(compact)
+        got = [k for k in ("revenue", "assets", "ebit", "net_income", "cfo")
+               if snap.get(k) is not None]
+        print(f"שדות שהתקבלו: {len(compact)} | מתוכם מרכזיים: {', '.join(got)}")
+        print(f"הדוח האחרון הוגש: {snap.get('_last_filed')}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.exit(main())

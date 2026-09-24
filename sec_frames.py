@@ -140,12 +140,20 @@ def with_tickers(df: pd.DataFrame) -> pd.DataFrame:
 def snapshot_for(tickers: Iterable[str], today: Optional[date] = None,
                  progress: bool = True) -> pd.DataFrame:
     """תמונת מצב מסוננת לרשימת סימולים, ממופתחת בסימול."""
-    mapping = ticker_to_cik()
+    mapping = ticker_to_cik(quiet=not progress)
     wanted = {}
     for sym in tickers:
         cik = mapping.get(sym.strip().upper())
         if cik is not None:
             wanted[int(cik)] = sym.strip().upper()
+
+    # בלי מיפוי אין טעם למשוך כלום. הגרסה הראשונה כן משכה - עשרים ותשע
+    # בקשות, שמונים שניות, אלפי חברות - ואז סיננה הכל לאפס שורות בשקט.
+    if not wanted:
+        if progress:
+            print(f"  אף אחד מ-{len(list(tickers))} הסימולים לא מופה ל-CIK. "
+                  f"מדלג על שכבת ה-SEC.", flush=True)
+        return pd.DataFrame()
 
     full = universe_snapshot(today=today, progress=progress)
     sub = full[full.index.isin(wanted)].copy()

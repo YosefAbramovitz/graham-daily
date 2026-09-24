@@ -459,7 +459,11 @@ def load_sec_data(tickers, quiet: bool = False) -> dict:
         for sym, row in df.to_dict(orient="index").items()
     }
     if not quiet:
-        print(f"  התקבלו נתונים ל-{len(SEC_DATA)} מניות\n", flush=True)
+        if SEC_DATA:
+            print(f"  התקבלו נתונים ל-{len(SEC_DATA)} מתוך {len(tickers)} מניות\n", flush=True)
+        else:
+            print("  שכבת ה-SEC לא החזירה דבר. הסריקה תרוץ על yahoo בלבד,\n"
+                  "  והבדיקה לאחור לא תהיה נקייה מהצצה קדימה.\n", flush=True)
     return SEC_DATA
 
 
@@ -935,7 +939,12 @@ def main():
 
     if "data_source" in df.columns:
         from_sec = int((df["data_source"] == "sec").sum())
-        print(f"[info] {from_sec} מתוך {len(df)} מניות נסרקו על נתוני SEC מלאים")
+        mixed = int((df["data_source"] == "mixed").sum())
+        print(f"[info] {from_sec} מתוך {len(df)} מניות נסרקו על נתוני SEC מלאים"
+              f" ({mixed} חלקית)")
+        if from_sec + mixed == 0 and not args.no_sec:
+            print("[warn] אף מניה לא קיבלה נתוני SEC. בדוק שהסוד SEC_USER_AGENT\n"
+                  "       מוגדר במאגר בפורמט 'graham-daily your@email.com'.")
     dupes = df["share_class_of"].notna().sum() if "share_class_of" in df.columns else 0
     if dupes:
         print(f"[info] {dupes} סדרות מניות משניות סומנו ולא ייספרו פעמיים")
