@@ -53,6 +53,15 @@ jobs:
           UNIVERSE: ${{ inputs.universe || 'sp1500' }}
         run: python graham_screener.py --universe "$UNIVERSE" --list-only
 
+      # המיפוי מסימול ל-CIK הוא נקודת כשל יחידה: בלעדיו כל שכבת ה-SEC
+      # מחזירה כלום, בשקט. נשמר במאגר כדי שריצה עתידית לא תהיה תלויה בו.
+      - name: Refresh the SEC ticker map
+        if: ${{ inputs.list_only != true }}
+        continue-on-error: true
+        env:
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT || 'graham-daily screener' }}
+        run: python sec_facts.py --refresh-map --check
+
       - name: Run the Graham screen
         if: ${{ inputs.list_only != true }}
         env:
@@ -80,7 +89,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add results.csv docs/index.html docs/enterprising.html
+          git add results.csv cik_map.json docs/index.html docs/enterprising.html
           if git diff --staged --quiet; then
             echo "אין שינוי, אין מה לשמור"
             exit 0
