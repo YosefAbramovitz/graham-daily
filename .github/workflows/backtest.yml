@@ -28,6 +28,12 @@ on:
         description: "כמה מניות מחזיקים בכל תקופה"
         required: false
         default: "30"
+      freq:
+        description: "תדירות האיזון. רבעוני נותן פי ארבעה תצפיות"
+        required: false
+        default: "annual"
+        type: choice
+        options: ["annual", "quarterly"]
       min_ebit_ev:
         description: "סף תשואת הרווח התפעולי. ריק = 0.10"
         required: false
@@ -89,8 +95,9 @@ jobs:
           MAX_NAMES: ${{ inputs.max_names || '30' }}
           MIN_EBIT_EV: ${{ inputs.min_ebit_ev }}
           MIN_GP: ${{ inputs.min_gross_profitability }}
+          FREQ: ${{ inputs.freq || 'annual' }}
         run: |
-          EXTRA=""
+          EXTRA="--freq $FREQ"
           [ -n "$MIN_EBIT_EV" ] && EXTRA="$EXTRA --min-ebit-ev $MIN_EBIT_EV"
           [ -n "$MIN_GP" ] && EXTRA="$EXTRA --min-gross-profitability $MIN_GP"
           if [ -n "$TICKERS" ]; then
