@@ -126,6 +126,22 @@ input[type=search]:focus,select:focus,input[type=number]:focus{outline:2px solid
   font-family:"IBM Plex Mono",monospace; font-size:13.5px}
 .calc .calcnote{font-size:12px; color:var(--muted)}
 .tablewrap{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
+.buybtn{font:inherit; font-size:12px; font-weight:600; padding:4px 11px; border-radius:999px;
+  border:1px solid var(--line); background:var(--chip,var(--unknown-bg)); color:var(--ink); cursor:pointer}
+.buybtn:hover{border-color:var(--accent); color:var(--accent)}
+.buybtn[disabled]{opacity:.35; cursor:not-allowed}
+.calc td{background:color-mix(in srgb,var(--accent) 5%,transparent); padding:0}
+.calcbox{padding:14px 18px; display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start}
+.calcbox .fld{display:flex; flex-direction:column; gap:4px}
+.calcbox label{font-size:11px; color:var(--muted)}
+.calcbox input{font:inherit; font-size:14px; width:110px; padding:5px 8px; border-radius:8px;
+  border:1px solid var(--line); background:var(--paper); color:var(--ink); direction:ltr; text-align:left}
+.lvl{display:flex; flex-direction:column; gap:3px; min-width:96px}
+.lvl b{font-size:15px; direction:ltr; text-align:left}
+.lvl span{font-size:11px; color:var(--muted)}
+.lvl.tp b{color:var(--good-ink)} .lvl.sl b{color:var(--bad-ink)}
+.calcnote{flex-basis:100%; font-size:12px; color:var(--muted); line-height:1.6; margin:0}
+.calcacts{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
 .positions{background:var(--paper); border:1px solid var(--line); border-radius:14px;
   box-shadow:var(--shadow); padding:18px 20px; margin:18px 0}
 .positions h2{margin:0 0 4px; font-size:17px}
@@ -222,6 +238,7 @@ __POSITIONS__
       <th data-k="dist_sma200_pct">מול ממוצע 200 <span class="arrow"></span></th>
       <th data-k="quality_score">איכות <span class="arrow"></span></th>
       <th data-k="margin_of_safety">גראהם <span class="arrow"></span></th>
+      <th class="nosort">קנייה</th>
     </tr></thead>
     <tbody id="tb"></tbody>
   </table>
@@ -362,9 +379,149 @@ function qualityCell(r){
 
 function grahamCell(r){
   const mos = num(r.margin_of_safety);
-  const f = r.fscore === "" ? "" : `<span class="sm ltr">F ${r.fscore}/9</span>`;
+  const fv = num(r.fscore);
+  const f = fv === null ? "" : `<span class="sm ltr">F ${fv}/9</span>`;
   const m = mos === null ? "—" : (mos*100).toFixed(1) + "%";
   return `<td>${esc(r.graham_mode)}<span class="sm ltr">MoS ${m}</span>${f}</td>`;
+}
+
+// ---------- כפתור הקנייה ----------
+// גראהם קובע את הצד העולה ואת השעון: יעד של 50% ומועד אחרון בסוף השנה
+// הקלנדרית השנייה. ה-ATR קובע את הצד היורד, כי סטופ באחוז קבוע מתעלם
+// מכך שמניה תנודתית זזה 3% ביום רגיל ומניה רגועה לא.
+const PROFIT_TARGET = 0.50;
+const ATR_STOP_MULT = 2.0;
+const HOLD_YEARS = 2;
+
+function deadlineFor(d){ return new Date(Date.UTC(d.getUTCFullYear()+HOLD_YEARS, 11, 31)); }
+function iso(d){ return d.toISOString().slice(0,10); }
+
+function buyCell(r){
+  const blocked = r.signal_kind === "פסילה";
+  const t = esc(r.ticker);
+  return `<td><button class="buybtn" ${blocked?"disabled":""}
+    title="${blocked?'נפסלה במבחן איכות':'חשב רמות כניסה ויציאה'}"
+    onclick="toggleCalc('${t}')">קנייה</button></td>`;
+}
+
+function buyPanel(r){
+  const t = esc(r.ticker);
+  const px = num(r.price);
+  const atrPct = num(r.atr_pct);
+  if (r.signal_kind === "פסילה") return "";
+  return `<tr class="calc" id="calc-${t}" hidden><td colspan="11"><div class="calcbox">
+    <div class="fld"><label>מחיר כניסה</label>
+      <input id="in-${t}" type="number" step="0.01" value="${px?px.toFixed(2):""}"
+             oninput="recalc('${t}',${atrPct??'null'})"></div>
+    <div class="fld"><label>כמות (לא חובה)</label>
+      <input id="qty-${t}" type="number" step="1" min="1" placeholder="—"
+             oninput="recalc('${t}',${atrPct??'null'})"></div>
+    <div class="lvl tp"><b id="tp-${t}">—</b><span>יעד, ‎+50%‎</span></div>
+    <div class="lvl sl"><b id="sl-${t}">—</b><span id="slw-${t}">סטופ</span></div>
+    <div class="lvl"><b id="rr-${t}">—</b><span>סיכון מול תשואה *</span></div>
+    <div class="lvl"><b id="dl-${t}">—</b><span>מועד יציאה אחרון</span></div>
+    <div class="calcacts">
+      <button class="buybtn" onclick="copyOrder('${t}')">העתק פקודה</button>
+      <button class="buybtn" onclick="copyPos('${t}')">העתק שורה ל-positions.csv</button>
+      <a class="buybtn" href="https://app.alpaca.markets/paper/dashboard/overview"
+         target="_blank" rel="noopener">פתח את אלפקה</a>
+    </div>
+    <p class="calcnote" id="note-${t}"></p>
+  </div></td></tr>`;
+}
+
+function toggleCalc(t){
+  const el = document.getElementById("calc-"+t);
+  if (!el) return;
+  el.hidden = !el.hidden;
+  if (!el.hidden) recalc(t, num((DATA.find(r=>r.ticker===t)||{}).atr_pct));
+}
+
+function levels(entry, atrPct){
+  if (!entry || entry <= 0) return null;
+  const tp = entry * (1 + PROFIT_TARGET);
+  // בלי ATR נופלים לסטופ של 15%, ואומרים את זה במפורש בהערה
+  const stopDist = (atrPct && atrPct > 0) ? entry * (atrPct/100) * ATR_STOP_MULT : entry * 0.15;
+  const sl = Math.max(entry - stopDist, 0.01);
+  return {tp, sl, rr: (tp - entry) / (entry - sl), usedAtr: !!(atrPct && atrPct > 0)};
+}
+
+function recalc(t, atrPct){
+  const entry = parseFloat(document.getElementById("in-"+t).value);
+  const L = levels(entry, atrPct);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  if (!L){ ["tp-","sl-","rr-","dl-"].forEach(p => set(p+t, "—")); set("note-"+t, ""); return; }
+  set("tp-"+t, L.tp.toFixed(2));
+  set("sl-"+t, L.sl.toFixed(2));
+  set("slw-"+t, L.usedAtr ? `סטופ, ‎${ATR_STOP_MULT}×ATR (${atrPct.toFixed(1)}%)` : "סטופ, ‎15%‎ (אין ATR)");
+  set("rr-"+t, L.rr.toFixed(1) + " : 1");
+  const dl = deadlineFor(new Date());
+  set("dl-"+t, iso(dl));
+  const qty = parseFloat(document.getElementById("qty-"+t).value);
+  const risk = qty ? ` סיכון על ${qty} מניות: ${((entry-L.sl)*qty).toFixed(0)}$.` : "";
+  set("note-"+t,
+    `פקודת bracket: קנייה ב-${entry.toFixed(2)}, יעד ${L.tp.toFixed(2)}, סטופ ${L.sl.toFixed(2)}, `
+    + `time in force ‎gtc‎.${risk} לאלפקה אין סגירה לפי זמן — המועד האחרון נאכף מהדף הזה, `
+    + `אחרי שתוסיף את השורה ל-positions.csv. `
+    + `* יחס הסיכון לתשואה כאן מחמיא: הוא משווה יעד רחוק של 50% לסטופ קרוב, `
+    + `ומתעלם מכך שההסתברות להגיע לסטופ גבוהה בהרבה. אל תקרא 7:1 כ"עסקה טובה פי שבע".`);
+}
+
+function orderText(t){
+  const r = DATA.find(x => x.ticker === t) || {};
+  const entry = parseFloat(document.getElementById("in-"+t).value);
+  const L = levels(entry, num(r.atr_pct));
+  if (!L) return null;
+  const qty = document.getElementById("qty-"+t).value || "<כמות>";
+  return [
+    `Alpaca bracket order — ${t}`,
+    `symbol:            ${t}`,
+    `side:              buy`,
+    `qty:               ${qty}`,
+    `type:              limit`,
+    `limit_price:       ${entry.toFixed(2)}`,
+    `time_in_force:     gtc`,
+    `order_class:       bracket`,
+    `take_profit.limit_price: ${L.tp.toFixed(2)}`,
+    `stop_loss.stop_price:    ${L.sl.toFixed(2)}`,
+    ``,
+    `מועד יציאה אחרון (נאכף מחוץ לאלפקה): ${iso(deadlineFor(new Date()))}`,
+  ].join("\\n");
+}
+
+function posRow(t){
+  const entry = parseFloat(document.getElementById("in-"+t).value);
+  if (!entry) return null;
+  const qty = document.getElementById("qty-"+t).value || "";
+  return `${t},${iso(new Date())},${entry.toFixed(2)},${qty},`;
+}
+
+function flash(btn, msg){
+  const was = btn.textContent; btn.textContent = msg;
+  setTimeout(() => { btn.textContent = was; }, 1400);
+}
+
+async function copyText(txt, btn){
+  try { await navigator.clipboard.writeText(txt); flash(btn, "הועתק ✓"); }
+  catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); flash(btn, "הועתק ✓"); }
+    catch (e2) { flash(btn, "ההעתקה נכשלה"); }
+    ta.remove();
+  }
+}
+
+function copyOrder(t){
+  const txt = orderText(t);
+  if (!txt) return flash(event.target, "חסר מחיר");
+  copyText(txt, event.target);
+}
+
+function copyPos(t){
+  const row = posRow(t);
+  if (!row) return flash(event.target, "חסר מחיר");
+  copyText(row, event.target);
 }
 
 function render(){
@@ -406,7 +563,9 @@ function render(){
         <span class="sm ltr">SMA ${num(r.sma200)?.toFixed(2) ?? "—"}</span></td>
       ${qualityCell(r)}
       ${grahamCell(r)}
-    </tr>`;
+      ${buyCell(r)}
+    </tr>
+    ${buyPanel(r)}`;
   }).join("");
 
   document.getElementById("none").hidden = rows.length > 0;
