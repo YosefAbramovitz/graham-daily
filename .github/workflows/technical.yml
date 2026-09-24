@@ -83,6 +83,9 @@ jobs:
 
       - name: Apply Graham's sell rule to open positions
         if: steps.gate.outputs.go == 'true'
+        env:
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
         run: python positions.py --in positions.csv --out positions_status.csv
 
       - name: Build the technical page
