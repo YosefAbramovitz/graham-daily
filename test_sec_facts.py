@@ -124,6 +124,100 @@ def test_empty_input_does_not_explode():
     assert sf.extract(None) == {}
 
 
+# חברה שעברה ל-ASC 606: התגית הישנה עד 2017, החדשה מ-2018 עם השוואה לשנתיים
+# קודמות - אבל ההשוואה הזאת הוגשה רק ב-2019.
+SWITCH = {"facts": {"us-gaap": {
+    "SalesRevenueNet": {"units": {"USD": [
+        _point("2015-12-31", 900, "2016-02-15", start="2015-01-01"),
+        _point("2016-12-31", 1000, "2017-02-15", start="2016-01-01"),
+        _point("2017-12-31", 1100, "2018-02-15", start="2017-01-01"),
+    ]}},
+    "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": [
+        _point("2016-12-31", 990, "2019-02-15", start="2016-01-01"),
+        _point("2017-12-31", 1090, "2019-02-15", start="2017-01-01"),
+        _point("2018-12-31", 1200, "2019-02-15", start="2018-01-01"),
+    ]}},
+}}}
+
+
+def test_old_tag_history_survives_a_tag_switch():
+    """לפני שהתגית החדשה הוגשה, התגית הישנה היא מה שהיה ידוע."""
+    compact = sf.extract(SWITCH)
+    snap = sf.as_of(compact, date(2017, 6, 30), years=5)
+    assert snap["revenue"] == 1000
+    assert snap["_history"]["revenue"] == [1000, 900]
+
+
+def test_preferred_tag_wins_once_it_was_filed():
+    compact = sf.extract(SWITCH)
+    snap = sf.as_of(compact, date(2019, 6, 30), years=5)
+    # 2018 רק בתגית החדשה; 2017 ו-2016 בשתיהן, והחדשה מועדפת
+    assert snap["_history"]["revenue"] == [1200, 1090, 990, 900]
+
+
+def test_new_tag_does_not_leak_backwards():
+    """ב-2018 ההשוואה בתגית החדשה עוד לא הוגשה, ולכן אסור לראות אותה."""
+    compact = sf.extract(SWITCH)
+    snap = sf.as_of(compact, date(2018, 6, 30), years=5)
+    assert snap["_history"]["revenue"] == [1100, 1000, 900]
+
+
+
+def _debt(**kw):
+    return sf.total_debt(lambda k: kw.get(k))
+
+
+def test_debt_noncurrent_plus_current_parts():
+    # AAPL: לא-שוטף + החלק השוטף + נייר ערך מסחרי
+    assert _debt(debt_long=78.3, debt_short=12.35, short_borrowings=7.98) == 78.3 + 12.35 + 7.98
+
+
+def test_debt_current_total_is_not_added_twice():
+    # JNJ: DebtCurrent כבר כולל את החלק השוטף של החוב הארוך
+    assert _debt(debt_long=39.4, debt_short=2.0, debt_current=8.5) == 39.4 + 8.5
+
+
+def test_long_term_total_already_includes_current_portion():
+    # דווח רק LongTermDebt: אסור להוסיף לו שוב את LongTermDebtCurrent
+    assert _debt(debt_total=49.4, debt_short=4.97) == 49.4
+    assert _debt(debt_total=49.4, debt_short=4.97, short_borrowings=4.46) == 49.4 + 4.46
+    assert abs(_debt(debt_total=41.4, debt_short=2.0, debt_current=8.5) - (41.4 + 6.5)) < 1e-9
+
+
+def test_no_debt_fields_gives_none():
+    assert _debt() is None
+    assert _debt(short_borrowings=0.0) == 0.0
+
+
+def test_a_tag_dropped_years_ago_is_not_current():
+    raw = {"facts": {"us-gaap": {
+        "Assets": {"units": {"USD": [_point("2025-12-31", 900, "2026-02-15")]}},
+        "DebtCurrent": {"units": {"USD": [_point("2016-12-31", 50, "2017-02-15")]}},
+        "LongTermDebtNoncurrent": {"units": {"USD": [_point("2025-12-31", 300, "2026-02-15")]}},
+    }}}
+    snap = sf.as_of(sf.extract(raw), date(2026, 6, 30))
+    assert "debt_current" not in snap
+    assert snap["debt_long"] == 300
+
+
+def test_predecessor_history_is_merged(monkeypatch=None):
+    new, old = 2115436, 34088
+    payload = {
+        new: {"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+            _point("2025-12-31", 300, "2026-02-15", start="2025-01-01")]}}}}},
+        old: {"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+            _point("2016-12-31", 200, "2017-02-15", start="2016-01-01")]}}}}},
+    }
+    real_get = sf._get
+    sf._get = lambda url, timeout=30: payload[int(url.split("CIK")[1].split(".")[0])]
+    try:
+        compact = sf.company_facts(new, use_cache=False)
+    finally:
+        sf._get = real_get
+    assert sf.as_of(compact, date(2017, 6, 30))["revenue"] == 200
+    assert sf.as_of(compact, date(2026, 6, 30))["revenue"] == 300
+
+
 if __name__ == "__main__":
     import sys
     failures = 0

@@ -460,8 +460,8 @@ function recalc(t, atrPct){
   const qty = parseFloat(document.getElementById("qty-"+t).value);
   const risk = qty ? ` סיכון על ${qty} מניות: ${((entry-L.sl)*qty).toFixed(0)}$.` : "";
   set("note-"+t,
-    `פקודת bracket: קנייה ב-${entry.toFixed(2)}, יעד ${L.tp.toFixed(2)}, סטופ ${L.sl.toFixed(2)}, `
-    + `time in force ‎gtc‎.${risk} לאלפקה אין סגירה לפי זמן — המועד האחרון נאכף מהדף הזה, `
+    `פקודה: קנייה ב-${entry.toFixed(2)} ויעד ${L.tp.toFixed(2)}. הסטופ (${L.sl.toFixed(2)}) אופציונלי ואינו חלק משיטת גראהם. `
+    + `פקודות GTC פוקעות אצל אלפקה אחרי 90 יום, וצריך לחדש את היעד (order.py renew).${risk} לאלפקה אין סגירה לפי זמן — המועד האחרון נאכף מהדף הזה, `
     + `אחרי שתוסיף את השורה ל-positions.csv. `
     + `* יחס הסיכון לתשואה כאן מחמיא: הוא משווה יעד רחוק של 50% לסטופ קרוב, `
     + `ומתעלם מכך שההסתברות להגיע לסטופ גבוהה בהרבה. אל תקרא 7:1 כ"עסקה טובה פי שבע".`);
@@ -481,9 +481,9 @@ function orderText(t){
     `type:              limit`,
     `limit_price:       ${entry.toFixed(2)}`,
     `time_in_force:     gtc`,
-    `order_class:       bracket`,
+    `order_class:       oto   (bracket אם מוסיפים סטופ)`,
     `take_profit.limit_price: ${L.tp.toFixed(2)}`,
-    `stop_loss.stop_price:    ${L.sl.toFixed(2)}`,
+    `stop_loss.stop_price:    ${L.sl.toFixed(2)}   (אופציונלי, לא לפי גראהם)`,
     ``,
     `מועד יציאה אחרון (נאכף מחוץ לאלפקה): ${iso(deadlineFor(new Date()))}`,
   ].join("\\n");

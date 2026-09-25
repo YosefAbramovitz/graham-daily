@@ -512,7 +512,8 @@ def apply_sec(res: ScreenResult, market_cap: Optional[float]) -> None:
     eps = take("eps_diluted") or take("eps_basic")
     shares = take("shares_outstanding")
 
-    debt = _sum(row, "debt_long", "debt_short")
+    from sec_facts import total_debt
+    debt = total_debt(lambda k: float(row[k]) if row.get(k) is not None else None)
     liquid = (cash or 0.0) + (sti or 0.0)
 
     if revenue is not None:

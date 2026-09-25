@@ -7,3 +7,6 @@
 
 __pycache__/
 *.pyc
+
+# MCP local configuration
+claude_desktop_config.json

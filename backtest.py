@@ -69,7 +69,7 @@ def metrics_at(compact: Dict[str, List[dict]], when: date,
         return None
 
     market_cap = price * shares
-    debt = (val("debt_long") or 0.0) + (val("debt_short") or 0.0)
+    debt = sf.total_debt(val) or 0.0
     liquid = (val("cash") or 0.0) + (val("short_term_investments") or 0.0)
     ev = market_cap + debt - liquid
 
@@ -353,41 +353,88 @@ def run(tickers: List[str], start_year: int, end_year: int,
     return out
 
 
+UNIVERSE_JUMP_RATIO = 1.5    # שינוי של פי 1.5 בכיסוי בין תקופות נחשב קפיצה
+
+
+def _span_years(periods: List[dict]) -> float:
+    span_days = (date.fromisoformat(periods[-1]["sell"])
+                 - date.fromisoformat(periods[0]["buy"])).days
+    return max(span_days / 365.25, 1e-9)
+
+
+def _annualised(periods: List[dict], key: str) -> float:
+    """תשואה שנתית מצטברת.
+
+    התשואה מוצמדת לזמן שחלף בפועל ולא למספר התקופות. באיזון רבעוני ארבעים
+    תקופות הן עשר שנים, ולחלק בארבעים היה מנפח את התשואה השנתית פי ארבעה.
+    """
+    total = 1.0
+    for p in periods:
+        total *= (1 + p[key])
+    return total ** (1 / _span_years(periods)) - 1
+
+
+def universe_jumps(periods: List[dict], ratio: float = UNIVERSE_JUMP_RATIO) -> List[dict]:
+    """תקופות שבהן מספר המניות עם מחיר השתנה בחדות.
+
+    קפיצה כזאת היא כמעט תמיד כיסוי נתונים ולא שינוי אמיתי במדד. העודף בכל
+    תקופה נשאר הוגן, כי התיק ומדד ההשוואה נמדדים על אותן מניות. אבל מה
+    שמדד ההשוואה מייצג משתנה: לפני הקפיצה הוא בערך S&P 500, אחריה S&P 1500.
+    """
+    jumps = []
+    for prev, cur in zip(periods, periods[1:]):
+        a, b = prev.get("n_priced") or 0, cur.get("n_priced") or 0
+        if a and b and max(a, b) / min(a, b) >= ratio:
+            jumps.append({"at": cur["buy"], "from": a, "to": b})
+    return jumps
+
+
 def summarise(periods: List[dict], n_universe: int) -> dict:
     if not periods:
         return {"periods": [], "note": "אין תקופות"}
 
-    # התשואה מוצמדת לזמן שחלף בפועל ולא למספר התקופות. באיזון רבעוני
-    # ארבעים תקופות הן עשר שנים, ולחלק בארבעים היה מנפח את התשואה השנתית
-    # פי ארבעה בערך.
-    span_days = ((date.fromisoformat(periods[-1]["sell"])
-                  - date.fromisoformat(periods[0]["buy"])).days)
-    years_elapsed = max(span_days / 365.25, 1e-9)
+    # תקופות מזומן *בתחילת* הבדיקה, כשאף מניה מתוך מאות לא עוברת, הן סימן
+    # לחור בנתונים ולא להחלטה של המסך. לספור אותן כאפס מול מדד עולה מעניש
+    # את המסך על משהו שאינו קשור אליו. לכן המדידה מתחילה בתקופה המושקעת
+    # הראשונה. מזומן *אחרי* זה נשאר בחישוב - שם זו באמת תוצאה של המסך.
+    # החלון המלא נשמר ב-full_window, לשקיפות.
+    first = next((i for i, p in enumerate(periods) if p["n_held"] > 0), None)
+    measured = periods[first:] if first is not None else []
 
-    def compound(key):
-        total = 1.0
-        for p in periods:
-            total *= (1 + p[key])
-        return total ** (1 / years_elapsed) - 1
-
-    invested = [p for p in periods if p["n_held"] > 0]
+    invested = [p for p in measured if p["n_held"] > 0]
     wins = sum(1 for p in invested if p["excess"] > 0)
-    return {
+
+    out = {
         "periods": periods,
         "periods_count": len(periods),
-        "years": round(years_elapsed, 2),
-        "years_invested": len(invested),
-        "years_in_cash": len(periods) - len(invested),
+        "years": round(_span_years(periods), 2),
+        "measured_from": measured[0]["buy"] if measured else None,
+        "measured_years": round(_span_years(measured), 2) if measured else 0.0,
+        "leading_cash_periods": first if first is not None else len(periods),
+        "periods_invested": len(invested),
+        "periods_in_cash": len(measured) - len(invested),
+        "periods_beating_benchmark": (f"{wins}/{len(invested)}" if invested
+                                      else "אין תקופות מושקעות"),
         "universe_size": n_universe,
-        "portfolio_cagr": round(compound("portfolio"), 4),
-        "benchmark_cagr": round(compound("benchmark"), 4),
-        "excess_cagr": round(compound("portfolio") - compound("benchmark"), 4),
-        "years_beating_benchmark": f"{wins}/{len(invested)}" if invested else "אין תקופות מושקעות",
-        "avg_names_held": round(sum(p["n_held"] for p in periods) / len(periods), 1),
-        "worst_period": min(p["portfolio"] for p in periods),
-        "best_period": max(p["portfolio"] for p in periods),
+        "universe_jumps": universe_jumps(periods),
+        "avg_names_held": (round(sum(p["n_held"] for p in measured) / len(measured), 1)
+                           if measured else 0.0),
+        "worst_period": min(p["portfolio"] for p in measured) if measured else None,
+        "best_period": max(p["portfolio"] for p in measured) if measured else None,
     }
 
+    if measured:
+        port, bench = _annualised(measured, "portfolio"), _annualised(measured, "benchmark")
+        out.update(portfolio_cagr=round(port, 4), benchmark_cagr=round(bench, 4),
+                   excess_cagr=round(port - bench, 4))
+    else:
+        out.update(portfolio_cagr=None, benchmark_cagr=None, excess_cagr=None)
+
+    fport, fbench = _annualised(periods, "portfolio"), _annualised(periods, "benchmark")
+    out["full_window"] = {"portfolio_cagr": round(fport, 4),
+                          "benchmark_cagr": round(fbench, 4),
+                          "excess_cagr": round(fport - fbench, 4)}
+    return out
 
 CAVEATS = """
 מה המספרים האלה אינם אומרים
@@ -446,16 +493,27 @@ def main() -> int:
     result["thresholds"] = thresholds or "ברירת מחדל"
 
     print("\n" + "=" * 60)
-    print(f"תשואה שנתית ממוצעת, התיק:  {result['portfolio_cagr']*100:+.2f}%")
-    print(f"תשואה שנתית ממוצעת, היקום: {result['benchmark_cagr']*100:+.2f}%")
-    print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
-    print(f"תקופות שבהן היכה את היקום: {result['years_beating_benchmark']}")
-    print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
-    if result.get("years_in_cash"):
-        print(f"\n[שים לב] ב-{result['years_in_cash']} מתוך {result['periods_count']} התקופות "
-              "אף מניה לא עברה את המסך, והתיק ישב במזומן.\n"
-              "        תשואת התיק כוללת אותן כאפס. אם זה רוב התקופות, המספר\n"
-              "        למעלה מתאר בעיקר את זה ולא את איכות הבחירה.")
+    if result.get("portfolio_cagr") is None:
+        print("אף מניה לא עברה את המסך באף תקופה. אין מה למדוד.")
+    else:
+        print(f"נמדד מ-{result['measured_from']}, {result['measured_years']} שנים\n")
+        print(f"תשואה שנתית ממוצעת, התיק:  {result['portfolio_cagr']*100:+.2f}%")
+        print(f"תשואה שנתית ממוצעת, היקום: {result['benchmark_cagr']*100:+.2f}%")
+        print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
+        print(f"תקופות שבהן היכה את היקום: {result['periods_beating_benchmark']}")
+        print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
+    if result.get("leading_cash_periods") and result.get("portfolio_cagr") is not None:
+        fw = result["full_window"]
+        print(f"\n[שים לב] {result['leading_cash_periods']} התקופות הראשונות היו ריקות "
+              "ולא נכללו במדידה.\n"
+              f"        על כל החלון, כולל המזומן: תיק {fw['portfolio_cagr']*100:+.2f}%, "
+              f"יקום {fw['benchmark_cagr']*100:+.2f}%.")
+    if result.get("periods_in_cash"):
+        print(f"\n[שים לב] ב-{result['periods_in_cash']} תקופות אחרי תחילת המדידה התיק "
+              "ישב במזומן. הן נספרות כאפס.")
+    for j in result.get("universe_jumps", []):
+        print(f"\n[שים לב] היקום קפץ מ-{j['from']} ל-{j['to']} מניות ב-{j['at']}.\n"
+              "        העודף בכל תקופה נשאר הוגן, אבל מדד ההשוואה לפני ואחרי אינו אותו מדד.")
     cov = result.get("coverage", {})
     if cov:
         print(f"\nכיסוי: {cov['with_prices']}/{cov['tickers']} עם מחירים, "

@@ -53,6 +53,11 @@ tr:last-child td{border-bottom:none}
 .lv{display:flex; flex-direction:column; min-width:92px}
 .lv b{font-size:15px; direction:ltr; text-align:left} .lv span{font-size:11px; color:var(--muted)}
 .lv.tp b{color:var(--good-ink)} .lv.sl b{color:var(--bad-ink)}
+.chart-link{display:inline-flex; width:104px; height:42px; align-items:center; justify-content:center;
+  border-radius:8px; background:var(--bg); border:1px solid var(--line); transition:border-color .15s}
+.chart-link:hover{border-color:var(--accent)}
+.chart{display:block; width:96px; height:32px}
+.chart-empty{font-size:11px; color:var(--muted); white-space:nowrap}
 .note{flex-basis:100%; font-size:12px; color:var(--muted); margin:2px 0 0; line-height:1.6}
 .err{background:var(--bad-bg); color:var(--bad-ink); border-radius:10px; padding:10px 14px; font-size:13px; margin:10px 0}
 .empty{padding:22px; text-align:center; color:var(--muted); font-size:13px}
@@ -79,8 +84,8 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
   <h2>פוזיציות פתוחות</h2>
   <div class="card"><table>
     <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
-      <th>מה לעשות</th><th>למה</th></tr></thead>
-    <tbody id="pos"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
+      <th>מה לעשות</th><th>למה</th><th>פקודת יציאה</th></tr></thead>
+    <tbody id="pos"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
   </table></div>
 
   <h2>פקודות פתוחות</h2>
@@ -91,14 +96,15 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
 
   <h2>מועמדות מהמסך <span class="sm" style="display:inline">מי שעבר את גראהם ואת שלב האיכות</span></h2>
   <div class="card"><table>
-    <thead><tr><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
-    <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
+    <thead><tr><th>תרשים</th><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
+    <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
   </table></div>
 
   <footer>
-    הסטופ והיעד נשלחים יחד עם הכניסה כפקודת bracket ויושבים אצל אלפקה. משם הם פועלים
-    גם כשהמסך הזה סגור והמחשב כבוי — לכן אין כאן לולאה שמוכרת מהמחשב, היא הייתה הגנה
-    גרועה יותר. הדבר היחיד שנאכף מכאן הוא מועד היציאה, כי לאלפקה אין פקודה שסוגרת לפי זמן.
+    הכניסה נשלחת עם יעד מכירה של +50%. סטופ נוסף רק אם סימנת אותו, כי אצל גראהם ירידת מחיר
+    בלי שינוי בשווי היא סיבה לקנות ולא למכור. אלפקה מבטלת פקודות GTC אחרי 90 יום, ולכן
+    פקודת היציאה צריכה חידוש במהלך האחזקה — עמודת "פקודת יציאה" מתריעה כשזה מתקרב. מועד
+    היציאה של גראהם נאכף מכאן, כי לאלפקה אין פקודה שסוגרת לפי זמן.
     <br>זהו כלי סינון בלבד. אינו ייעוץ השקעות ואינו המלצה לקנות או למכור נייר ערך כלשהו.
   </footer>
 </div>
@@ -121,6 +127,29 @@ const f2 = v => (v === null || v === undefined || v === "") ? "—" : Number(v).
 let MARKET_OPEN = false, WATCH = [];
 
 function showErr(msg){ $("err").innerHTML = msg ? `<div class="err">${esc(msg)}</div>` : ""; }
+
+function chartSvg(values){
+  const nums = (values || []).map(Number).filter(Number.isFinite);
+  if (nums.length === 1) {
+    return `<svg class="chart" viewBox="0 0 96 32" role="img" aria-label="מחיר נוכחי בלבד">
+      <line x1="2" y1="16" x2="94" y2="16" stroke="var(--line)" stroke-width="2"/>
+      <circle cx="94" cy="16" r="3" fill="var(--accent)"/>
+    </svg>`;
+  }
+  if (!nums.length) return `<span class="chart-empty">אין נתוני מחיר</span>`;
+  const min = Math.min(...nums), max = Math.max(...nums);
+  const spread = max - min || Math.max(Math.abs(max) * 0.01, 0.01);
+  const points = nums.map((v, i) => {
+    const x = 2 + i * 92 / (nums.length - 1);
+    const y = 30 - (v - min) * 26 / spread;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const color = nums[nums.length - 1] >= nums[0] ? "var(--good-ink)" : "var(--bad-ink)";
+  return `<svg class="chart" viewBox="0 0 96 32" role="img" aria-label="תרשים מחיר מוקטן">
+    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>`;
+}
 
 async function jget(url){
   const r = await fetch(url);
@@ -170,11 +199,24 @@ async function loadPositions(){
         <td class="num"><span class="${g>=0?'up':'down'}">${g>=0?"+":""}${g.toFixed(1)}%</span>
           <span class="sm">${r.pl>=0?"+":""}${r.pl.toFixed(2)}$</span></td>
         <td><span class="pill ${cls}">${esc(r.action)}</span></td>
-        <td class="sm" style="display:table-cell">${esc(r.why)}</td></tr>`;
-    }).join("") : `<tr><td colspan="7" class="empty">אין פוזיציות פתוחות.</td></tr>`;
+        <td class="sm" style="display:table-cell">${esc(r.why)}</td>
+        ${exitCell(r)}</tr>`;
+    }).join("") : `<tr><td colspan="8" class="empty">אין פוזיציות פתוחות.</td></tr>`;
   } catch (e) {
-    $("pos").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
+    $("pos").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
+}
+
+function exitCell(r){
+  const st = r.exit_state, d = r.exit_days_left;
+  let pill;
+  if (st === "none") pill = `<span class="pill no">אין פקודת יציאה</span>`;
+  else if (st === "expiring") pill = `<span class="pill warn">פוקעת בעוד ${d} ימים</span>`;
+  else if (st === "ok") pill = `<span class="pill ok">פעילה${d != null ? ` · עוד ${d} ימים` : ""}</span>`;
+  else pill = `<span class="pill">לא ידוע</span>`;
+  const btn = (st === "none" || st === "expiring")
+    ? ` <button class="btn" onclick="askRenew('${esc(r.ticker)}')">חדש</button>` : "";
+  return `<td>${pill}${btn}</td>`;
 }
 
 async function loadOrders(){
@@ -201,6 +243,11 @@ async function loadWatch(){
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
       return `<tr>
+        <td><a class="chart-link" href="https://app.alpaca.markets/stocks/${encodeURIComponent(r.ticker)}"
+            target="_blank" rel="noopener noreferrer"
+            title="פתח את ${esc(r.ticker)} ב-Alpaca">${chartSvg(
+              r.chart && r.chart.length ? r.chart : (r.last ? [Number(r.last)] : [])
+            )}</a></td>
         <td class="tk">${esc(r.ticker)}</td>
         <td>${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
         <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span></td>
@@ -211,7 +258,7 @@ async function loadWatch(){
             title="${blocked?"נפסלה בשלב האיכות":""}"
             onclick="togglePanel('${esc(r.ticker)}')">קנייה</button></td>
       </tr>
-      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="7">
+      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="8">
         <div class="panelbox">
           <div class="fld"><label>מחיר כניסה</label>
             <input id="e-${esc(r.ticker)}" type="number" step="0.01"
@@ -220,15 +267,19 @@ async function loadWatch(){
           <div class="fld"><label>כמות</label>
             <input id="q-${esc(r.ticker)}" type="number" step="1" min="1" value="1"
                    oninput="preview('${esc(r.ticker)}')"></div>
+          <div class="fld"><label>סטופ</label>
+            <label class="sm" style="display:flex;gap:6px;align-items:center;padding-top:6px">
+              <input id="st-${esc(r.ticker)}" type="checkbox" style="width:auto"
+                     onchange="preview('${esc(r.ticker)}')"> לפי ATR</label></div>
           <div class="lv tp"><b id="t-${esc(r.ticker)}">—</b><span>יעד, +50%</span></div>
           <div class="lv sl"><b id="s-${esc(r.ticker)}">—</b><span id="sh-${esc(r.ticker)}">סטופ</span></div>
           <div class="lv"><b id="d-${esc(r.ticker)}">—</b><span>מועד יציאה אחרון</span></div>
           <button class="btn primary" onclick="askSend('${esc(r.ticker)}')">שלח פקודה</button>
           <p class="note" id="n-${esc(r.ticker)}"></p>
         </div></td></tr>`}`;
-    }).join("") : `<tr><td colspan="7" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
   } catch (e) {
-    $("watch").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
+    $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -239,6 +290,7 @@ function togglePanel(t){
 }
 
 const LV = {};
+function useStop(t){ const c = $("st-"+t); return !!(c && c.checked); }
 async function preview(t){
   const entry = parseFloat($("e-"+t).value);
   const row = WATCH.find(r => r.ticker === t) || {};
@@ -246,48 +298,83 @@ async function preview(t){
   try {
     const L = await jpost("/api/preview", {entry, atr_pct: row.atr_pct});
     LV[t] = L;
+    const st = useStop(t);
     $("t-"+t).textContent = L.target.toFixed(2);
-    $("s-"+t).textContent = L.stop.toFixed(2);
-    $("sh-"+t).textContent = "סטופ, " + L.how;
+    $("s-"+t).textContent = st ? L.stop.toFixed(2) : "—";
+    $("sh-"+t).textContent = st ? "סטופ, " + L.how : "ללא סטופ";
     $("d-"+t).textContent = L.deadline;
     const qty = parseInt($("q-"+t).value) || 0;
-    const risk = qty ? ` סיכון על ${qty} מניות: ${((entry - L.stop)*qty).toFixed(2)}$.` : "";
-    $("n-"+t).textContent =
-      `היעד והסטופ נשלחים יחד עם הכניסה ומבטלים זה את זה.${risk} ` +
-      `יחס הסיכון לתשואה (${L.rr}) מחמיא: היעד רחוק והסטופ קרוב, וההסתברות להגיע לסטופ גבוהה בהרבה.`;
+    const risk = (st && qty) ? ` סיכון עד הסטופ על ${qty} מניות: ${((entry - L.stop)*qty).toFixed(2)}$.` : "";
+    $("n-"+t).textContent = (st
+        ? `היעד והסטופ נשלחים יחד עם הכניסה ומבטלים זה את זה.${risk} הסטופ אינו חלק משיטת גראהם: ` +
+          `אצלו ירידת מחיר בלי שינוי בשווי היא סיבה לקנות, לא למכור.`
+        : `נשלחים הכניסה ויעד מכירה של +50%, בלי סטופ, לפי גראהם.`) +
+      ` אלפקה מבטלת פקודות GTC אחרי 90 יום; כשזה מתקרב תופיע התראה בטבלת הפוזיציות עם כפתור חידוש.`;
   } catch (e) { $("n-"+t).textContent = e.message; }
 }
 
-let PENDING = null;
+let PENDING = null, MODE = "buy";
+function openDialog(html, word){
+  $("dlgbody").innerHTML = html;
+  $("dlgword").value = "";
+  $("dlgword").placeholder = `הקלד ${word} כדי לאשר`;
+  $("dlg").showModal();
+  $("dlgword").focus();
+}
+
 function askSend(t){
   const L = LV[t];
   const entry = parseFloat($("e-"+t).value);
   const qty = parseInt($("q-"+t).value);
   if (!L || !entry || !qty){ showErr("מלא מחיר כניסה וכמות"); return; }
-  PENDING = {ticker:t, entry, qty, target:L.target, stop:L.stop};
-  $("dlgbody").innerHTML = `
+  const st = useStop(t);
+  MODE = "buy";
+  PENDING = {ticker:t, entry, qty, target:L.target, use_stop:st, stop: st ? L.stop : null};
+  openDialog(`
     <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
     <div class="row"><span>כמות</span><b>${qty}</b></div>
     <div class="row"><span>כניסה, limit</span><b>${entry.toFixed(2)}</b></div>
     <div class="row"><span>יעד</span><b>${L.target.toFixed(2)}</b></div>
-    <div class="row"><span>סטופ</span><b>${L.stop.toFixed(2)}</b></div>
+    <div class="row"><span>סטופ</span><b>${st ? L.stop.toFixed(2) : "ללא"}</b></div>
     <div class="row"><span>עלות משוערת</span><b>${(entry*qty).toFixed(2)}$</b></div>
-    <div class="row"><span>סיכון עד הסטופ</span><b>${((entry-L.stop)*qty).toFixed(2)}$</b></div>`;
-  $("dlgword").value = "";
-  $("dlg").showModal();
-  $("dlgword").focus();
+    ${st ? `<div class="row"><span>סיכון עד הסטופ</span><b>${((entry-L.stop)*qty).toFixed(2)}$</b></div>` : ""}`,
+    "BUY");
+}
+
+function askRenew(t){
+  MODE = "renew";
+  PENDING = {ticker:t};
+  openDialog(`
+    <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
+    <p class="sm" style="margin:10px 0">פקודות המכירה הפתוחות של המניה יבוטלו, ותישלח פקודה חדשה
+      ביעד של +50% ממחיר הכניסה הממוצע, לתשעים יום נוספים.</p>
+    <label class="sm" style="display:flex;gap:6px;align-items:center">
+      <input id="rn-stop" type="checkbox" style="width:auto;margin:0"> להוסיף סטופ לפי ATR (OCO)</label>`,
+    "RENEW");
 }
 
 $("dlgsend").addEventListener("click", async () => {
-  if ($("dlgword").value.trim() !== "BUY"){ $("dlgword").focus(); return; }
-  const body = {...PENDING, confirm:"BUY"};
+  const word = MODE === "renew" ? "RENEW" : "BUY";
+  if ($("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    const r = await jpost("/api/order", body);
-    $("dlg").close();
-    showErr("");
-    $("n-"+body.ticker).textContent =
-      `נשלח. מזהה ${r.id}, סטטוס ${r.status}. הוסף ל-positions.csv:  ${r.csv_row}`;
+    if (MODE === "renew") {
+      const stopBox = $("rn-stop");
+      const r = await jpost("/api/renew",
+        {ticker: PENDING.ticker, use_stop: !!(stopBox && stopBox.checked), confirm: "RENEW"});
+      $("dlg").close();
+      showErr("");
+      const exp = r.expires_at ? `, פוקעת ב-${String(r.expires_at).slice(0,10)}` : "";
+      $("err").innerHTML = `<div class="err" style="background:var(--good-bg);color:var(--good-ink)">` +
+        `${esc(PENDING.ticker)}: בוטלו ${r.cancelled} פקודות ונשלחה חדשה (${esc(r.status)}${esc(exp)}).</div>`;
+    } else {
+      const body = {...PENDING, confirm:"BUY"};
+      const r = await jpost("/api/order", body);
+      $("dlg").close();
+      showErr("");
+      $("n-"+body.ticker).textContent =
+        `נשלח. מזהה ${r.id}, סטטוס ${r.status}. הוסף ל-positions.csv:  ${r.csv_row}`;
+    }
     refresh();
   } catch (e) { showErr(e.message); }
   finally { $("dlgsend").disabled = false; }

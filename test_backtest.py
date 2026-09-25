@@ -124,7 +124,7 @@ def test_summary_compounds_and_counts():
     s = bt.summarise(periods, 400)
     # שנתיים בדיוק: (1.20 * 0.90) ^ (1/2) - 1
     assert abs(s["portfolio_cagr"] - ((1.2 * 0.9) ** 0.5 - 1)) < 1e-3, s["portfolio_cagr"]
-    assert s["years_beating_benchmark"] == "1/2"
+    assert s["periods_beating_benchmark"] == "1/2"
     assert s["periods_count"] == 2
     assert s["worst_period"] == -0.10
     assert s["best_period"] == 0.20
@@ -167,6 +167,61 @@ def test_restated_numbers_do_not_leak_backwards():
     m = bt.metrics_at(f, date(2023, 6, 30), price=50.0)
     ev = m["market_cap"] + 2e9 - 1e9
     assert abs(m["ebit_ev"] - 1e9 / ev) < 1e-9
+
+
+def test_leading_cash_is_not_counted_against_the_screen():
+    """רבעונים ריקים בהתחלה הם חור בנתונים, לא החלטה של המסך."""
+    periods = [
+        {"buy": "2019-01-01", "sell": "2020-01-01", "portfolio": 0.0, "benchmark": 0.30,
+         "excess": -0.30, "n_held": 0, "n_passed": 0, "n_priced": 100, "names": []},
+        {"buy": "2020-01-01", "sell": "2021-01-01", "portfolio": 0.10, "benchmark": 0.05,
+         "excess": 0.05, "n_held": 10, "n_passed": 10, "n_priced": 100, "names": []},
+    ]
+    s = bt.summarise(periods, 100)
+    assert s["leading_cash_periods"] == 1
+    assert s["measured_from"] == "2020-01-01"
+    assert abs(s["portfolio_cagr"] - 0.10) < 2e-3, s["portfolio_cagr"]
+    assert abs(s["benchmark_cagr"] - 0.05) < 2e-3, s["benchmark_cagr"]
+    assert s["full_window"]["benchmark_cagr"] > s["benchmark_cagr"]
+    assert s["periods_beating_benchmark"] == "1/1"
+
+
+def test_cash_after_the_start_still_counts():
+    """מזומן אחרי שהמסך כבר התחיל לבחור הוא תוצאה של המסך, ונספר."""
+    periods = [
+        {"buy": "2020-01-01", "sell": "2021-01-01", "portfolio": 0.10, "benchmark": 0.05,
+         "excess": 0.05, "n_held": 10, "n_passed": 10, "n_priced": 100, "names": []},
+        {"buy": "2021-01-01", "sell": "2022-01-01", "portfolio": 0.0, "benchmark": 0.10,
+         "excess": -0.10, "n_held": 0, "n_passed": 0, "n_priced": 100, "names": []},
+    ]
+    s = bt.summarise(periods, 100)
+    assert s["leading_cash_periods"] == 0
+    assert s["periods_in_cash"] == 1
+    assert s["periods_invested"] == 1
+    assert abs(s["portfolio_cagr"] - (1.10 ** 0.5 - 1)) < 2e-3, s["portfolio_cagr"]
+
+
+def test_all_cash_gives_no_cagr():
+    periods = [
+        {"buy": "2020-01-01", "sell": "2021-01-01", "portfolio": 0.0, "benchmark": 0.05,
+         "excess": -0.05, "n_held": 0, "n_passed": 0, "n_priced": 100, "names": []},
+    ]
+    s = bt.summarise(periods, 100)
+    assert s["portfolio_cagr"] is None
+    assert s["leading_cash_periods"] == 1
+
+
+def test_universe_jump_is_reported():
+    periods = [
+        {"buy": "2020-06-28", "sell": "2020-09-28", "portfolio": 0.1, "benchmark": 0.1,
+         "excess": 0.0, "n_held": 5, "n_passed": 5, "n_priced": 408, "names": []},
+        {"buy": "2020-09-28", "sell": "2020-12-28", "portfolio": 0.1, "benchmark": 0.1,
+         "excess": 0.0, "n_held": 5, "n_passed": 5, "n_priced": 1384, "names": []},
+        {"buy": "2020-12-28", "sell": "2021-03-28", "portfolio": 0.1, "benchmark": 0.1,
+         "excess": 0.0, "n_held": 5, "n_passed": 5, "n_priced": 1399, "names": []},
+    ]
+    jumps = bt.summarise(periods, 1500)["universe_jumps"]
+    assert jumps == [{"at": "2020-09-28", "from": 408, "to": 1384}], jumps
 
 
 if __name__ == "__main__":

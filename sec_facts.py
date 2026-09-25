@@ -25,7 +25,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -250,10 +250,17 @@ CONCEPTS: Dict[str, List[str]] = {
     "receivables": ["AccountsReceivableNetCurrent", "ReceivablesNetCurrent"],
     "ppe_net": ["PropertyPlantAndEquipmentNet"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
-    "debt_long": ["LongTermDebtNoncurrent", "LongTermDebt",
+    # החוב מפוצל לארבעה שדות, כי חברות מדווחות אותו בצורות שאינן מתחברות
+    # בחיבור פשוט: LongTermDebt כבר כולל את החלק השוטף, DebtCurrent כבר כולל
+    # את ההלוואות לזמן קצר. הצירוף הנכון נעשה ב-total_debt.
+    "debt_long": ["LongTermDebtNoncurrent",                 # ארוך, בלי החלק השוטף
                   "LongTermDebtAndCapitalLeaseObligations"],
-    "debt_short": ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings",
-                   "OtherShortTermBorrowings"],
+    "debt_total": ["LongTermDebt"],                        # ארוך כולל החלק השוטף
+    "debt_short": ["LongTermDebtCurrent",                  # החלק השוטף של הארוך
+                   "LongTermDebtAndCapitalLeaseObligationsCurrent"],
+    "debt_current": ["DebtCurrent"],                       # כל החוב השוטף
+    "short_borrowings": ["ShortTermBorrowings", "CommercialPaper",
+                         "OtherShortTermBorrowings"],
     "shares_outstanding": ["CommonStockSharesOutstanding",
                            "CommonStockSharesIssued"],
 
@@ -262,8 +269,11 @@ CONCEPTS: Dict[str, List[str]] = {
             "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment",
               "PaymentsToAcquireProductiveAssets"],
-    "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock",
-                       "PaymentsOfDistributionsToAffiliates"],
+    # PaymentsOfDistributionsToAffiliates הוסר: זו חלוקה לבעלי זכויות מיעוט,
+    # לא דיבידנד לבעלי המניות. דיבידנד לרגילות קודם (JNJ ו-PFE משתמשות
+    # ב-PaymentsOfOrdinaryDividends), הכולל כגיבוי.
+    "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfOrdinaryDividends",
+                       "PaymentsOfDividends"],
     "buybacks": ["PaymentsForRepurchaseOfCommonStock",
                  "PaymentsForRepurchaseOfEquity"],
     "stock_issued": ["ProceedsFromIssuanceOfCommonStock",
@@ -275,12 +285,45 @@ INSTANT_FIELDS = {
     "assets", "assets_current", "liabilities", "liabilities_current", "equity",
     "cash", "short_term_investments", "receivables", "ppe_net",
     "retained_earnings", "debt_long", "debt_short", "shares_outstanding",
+    "debt_total", "debt_current", "short_borrowings",
 }
+
+
+def total_debt(get) -> Optional[float]:
+    """סך החוב הפיננסי, בלי לספור פעמיים.
+
+    ``get`` מקבל שם שדה ומחזיר מספר או None. הכללים:
+      * החלק השוטף: DebtCurrent אם קיים (הוא כבר כולל הכול), אחרת החלק השוטף
+        של החוב הארוך ועוד הלוואות לזמן קצר ונייר ערך מסחרי.
+      * החלק הארוך: הלא-שוטף אם דווח. אם דווח רק LongTermDebt, הוא כבר כולל
+        את החלק השוטף, ולכן מוסיפים לו רק את מה שאינו חוב ארוך.
+    """
+    def g(k):
+        v = get(k)
+        return float(v) if isinstance(v, (int, float)) and v == v else None
+
+    noncurrent, total = g("debt_long"), g("debt_total")
+    cur_ltd, cur_all, borrow = g("debt_short"), g("debt_current"), g("short_borrowings")
+
+    if cur_all is not None:
+        current = cur_all
+    elif cur_ltd is not None or borrow is not None:
+        current = (cur_ltd or 0.0) + (borrow or 0.0)
+    else:
+        current = None
+
+    if noncurrent is not None:
+        return noncurrent + (current or 0.0)
+    if total is not None:
+        extra = (cur_all - (cur_ltd or 0.0)) if cur_all is not None else (borrow or 0.0)
+        return total + max(extra, 0.0)
+    return current
 
 UNITS = {"eps_diluted": "USD/shares", "eps_basic": "USD/shares",
          "shares_outstanding": "shares"}
 
 ANNUAL_MIN_DAYS = 340
+STALE_DAYS = 400      # שדה שהתקופה האחרונה שלו ישנה מזה ביחס למאזן - לא נוכחי
 ANNUAL_MAX_DAYS = 400
 
 
@@ -293,6 +336,7 @@ class Fact:
     form: str
     fy: Optional[int] = None
     start: Optional[date] = None
+    tag: Optional[str] = None
 
     @property
     def days(self) -> Optional[int]:
@@ -349,9 +393,11 @@ def extract(raw: dict) -> Dict[str, List[dict]]:
                     "start": (point.get("start") or None),
                     "tag": tag,
                 })
-            if rows:
-                # התגית הראשונה שהחזירה משהו מנצחת; לא מערבבים תגיות באותו שדה.
-                break
+            # לא עוצרים בתגית הראשונה. חברות מחליפות תגית כשהתקן משתנה - ההכנסות
+            # עברו ל-RevenueFromContractWithCustomer... עם ASC 606 בדוחות של 2018 -
+            # והתגית החדשה מכסה רק את השנים שאחרי המעבר. עצירה בה מחקה את כל
+            # ההיסטוריה שלפני, ובבדיקה לאחור אף חברה לא עברה את מבחן הגודל לפני 2019.
+            # הבחירה בין תגיות נעשית לכל תקופה בנפרד, ב-_pick_per_period.
         if rows:
             out[field_name] = rows
 
@@ -385,8 +431,30 @@ def _to_facts(rows: Iterable[dict]) -> List[Fact]:
             continue
         facts.append(Fact(end=end, val=float(r["val"]), filed=filed,
                           form=str(r.get("form") or ""), fy=r.get("fy"),
-                          start=_parse_day(r.get("start"))))
+                          start=_parse_day(r.get("start")),
+                          tag=r.get("tag")))
     return facts
+
+
+def _tag_rank(field_name: str, tag: Optional[str]) -> int:
+    tags = CONCEPTS.get(field_name, [])
+    return tags.index(tag) if tag in tags else len(tags)
+
+
+def _pick_per_period(facts: List[Fact], field_name: str) -> Dict[date, Fact]:
+    """דיווח אחד לכל תקופה.
+
+    קודם התגית המועדפת מבין אלה שכבר הוגשו, ובתוך אותה תגית - ההגשה
+    הראשונה, כי זה מה שהמשקיע ראה אז. הסינון לפי תאריך הגשה קורה לפני כן,
+    ולכן תגית שהופיעה רק אחר כך אינה יכולה לדרוס את מה שהיה ידוע בזמנו.
+    """
+    by_period: Dict[date, Fact] = {}
+    for f in facts:
+        seen = by_period.get(f.end)
+        if seen is None or ((_tag_rank(field_name, f.tag), f.filed)
+                            < (_tag_rank(field_name, seen.tag), seen.filed)):
+            by_period[f.end] = f
+    return by_period
 
 
 def annual_series(compact: Dict[str, List[dict]], field_name: str,
@@ -414,11 +482,7 @@ def annual_series(compact: Dict[str, List[dict]], field_name: str,
         if not facts:
             return []
 
-    by_period: Dict[date, Fact] = {}
-    for f in facts:
-        seen = by_period.get(f.end)
-        if seen is None or f.filed < seen.filed:
-            by_period[f.end] = f
+    by_period = _pick_per_period(facts, field_name)
 
     return sorted(by_period.values(), key=lambda f: f.end, reverse=True)
 
@@ -433,11 +497,7 @@ def quarterly_series(compact: Dict[str, List[dict]], field_name: str,
     if as_of_date is not None:
         facts = [f for f in facts if f.filed <= as_of_date]
     facts = [f for f in facts if f.days is not None and 60 <= f.days <= 120]
-    by_period: Dict[date, Fact] = {}
-    for f in facts:
-        seen = by_period.get(f.end)
-        if seen is None or f.filed < seen.filed:
-            by_period[f.end] = f
+    by_period = _pick_per_period(facts, field_name)
     return sorted(by_period.values(), key=lambda f: f.end, reverse=True)
 
 
@@ -468,9 +528,16 @@ def as_of(compact: Dict[str, List[dict]], when: Optional[date] = None,
     history: Dict[str, List[float]] = {}
     period_ends: Dict[str, List[str]] = {}
 
+    # שדה שהחברה הפסיקה לדווח לפני שנים (למשל תגית שהוחלפה) לא נחשב נוכחי.
+    # מודדים מול תאריך המאזן האחרון שדווח.
+    ref = annual_series(compact, "assets", when)
+    stale_before = (ref[0].end - timedelta(days=STALE_DAYS)) if ref else None
+
     for field_name in CONCEPTS:
         series = annual_series(compact, field_name, when)
         if not series:
+            continue
+        if stale_before is not None and series[0].end < stale_before:
             continue
         snapshot[field_name] = series[0].val
         history[field_name] = [f.val for f in series[:years]]
@@ -488,8 +555,17 @@ def as_of(compact: Dict[str, List[dict]], when: Optional[date] = None,
 # שליפה עם מטמון
 # ---------------------------------------------------------------------------
 
+# חברה שעברה ארגון מחדש יכולה לקבל CIK חדש, ומיפוי הסימולים של ה-SEC מצביע
+# תמיד על הישות העדכנית. ההיסטוריה נשארת תחת ה-CIK הקודם, ובלעדיה החברה
+# נראית בבדיקה לאחור כאילו לא הגישה דבר. כאן ממזגים את השניים.
+PREDECESSOR_CIKS: Dict[int, List[int]] = {
+    2115436: [34088],   # ExxonMobil Holdings Corp <- Exxon Mobil Corp
+}
+
+
 def _cache_path(cik: int) -> Path:
-    return CACHE_DIR / "facts" / f"CIK{cik:010d}.json.gz"
+    # v3: שדות החוב פוצלו ונוספו ישויות קודמות; מטמון ישן חסר אותם.
+    return CACHE_DIR / "facts_v3" / f"CIK{cik:010d}.json.gz"
 
 
 def load_cached(cik: int) -> Optional[Dict[str, List[dict]]]:
@@ -523,6 +599,10 @@ def company_facts(cik: int, use_cache: bool = True) -> Optional[Dict[str, List[d
     if not raw:
         return None
     compact = extract(raw)
+    for old in PREDECESSOR_CIKS.get(int(cik), []):
+        old_raw = _get(FACTS_URL.format(cik=old))
+        for field_name, rows in extract(old_raw or {}).items():
+            compact.setdefault(field_name, []).extend(rows)
     if use_cache and compact:
         save_cached(cik, compact)
     return compact
@@ -536,7 +616,8 @@ def facts_for(ticker: str, use_cache: bool = True) -> Optional[Dict[str, List[di
 
 
 __all__ = ["CONCEPTS", "Fact", "annual_series", "as_of", "company_facts",
-           "extract", "facts_for", "quarterly_series", "ticker_to_cik", "ttm"]
+           "extract", "facts_for", "quarterly_series", "ticker_to_cik", "total_debt",
+           "ttm"]
 
 
 def main() -> int:
