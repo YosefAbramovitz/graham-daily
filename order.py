@@ -73,6 +73,7 @@ PROFIT_TARGET = 0.50
 ATR_STOP_MULT = 2.0
 HOLD_YEARS = 2
 FALLBACK_STOP_PCT = 0.15
+MAX_ENTRY_ABOVE_MARKET = 0.03   # כמו במסך: מעל זה, כנראה טעות הקלדה או מחיר ישן
 
 TECH_CSV = ("https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/"
             "main/tech_results.csv")
@@ -208,6 +209,13 @@ def cmd_buy(args) -> int:
         if entry is None:
             sys.exit(f"לא הצלחתי למשוך מחיר ל-{sym}. ציין --entry ידנית.")
         print(f"מחיר אחרון של {sym}: {entry:.2f}")
+    else:
+        # קנייה ב-limit מעל השוק מתבצעת מיד במחיר השוק, והיעד והסטופ נשארים
+        # מחושבים ממחיר שלא שולם; סטופ כזה יכול לצאת מעל המחיר ולמכור מיד.
+        market = last_price(sym)
+        if market and entry > market * (1 + MAX_ENTRY_ABOVE_MARKET):
+            sys.exit(f"מחיר הכניסה {entry:.2f} גבוה ב-{(entry / market - 1) * 100:.0f}% "
+                     f"מהמחיר בשוק ({market:.2f}). עדכן את --entry.")
 
     use_stop = bool(args.with_stop or args.stop is not None)
     atr = args.atr if args.atr is not None else atr_pct_for(sym)

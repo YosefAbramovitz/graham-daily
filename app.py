@@ -15,6 +15,18 @@
 
 ואז לפתוח את http://127.0.0.1:5000 בדפדפן.
 
+גישה מהטלפון, דרך Tailscale
+---------------------------
+    python app.py --tailscale
+
+השרת מאזין אז גם מחוץ למחשב, אבל מקבל רק שני סוגי כתובות: המחשב עצמו,
+וכתובות Tailscale (100.64.0.0/10). כל השאר מקבלים 403, גם אם הם באותה
+רשת Wi-Fi. מעבר לזה נדרש טוקן: הוא נוצר בהפעלה הראשונה, נשמר ב-.env בשם
+APP_TOKEN, והשרת מדפיס כתובת שמכילה אותו. פותחים אותה פעם אחת בטלפון,
+והטוקן נשמר שם בעוגייה ל-30 יום. מהמחשב עצמו לא נדרש טוקן.
+
+להחלפת הטוקן: למחוק את השורה APP_TOKEN מ-.env ולהפעיל מחדש.
+
 מפתחות: קובץ ``.env`` בתיקייה הזאת, שתי שורות::
 
     ALPACA_API_KEY_ID=PK...
@@ -33,17 +45,21 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import io
+import ipaddress
 import json
 import os
+import secrets
+import subprocess
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory
 
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
                          exit_state, flatten_orders)
@@ -57,12 +73,100 @@ PROFIT_TARGET = 0.50
 ATR_STOP_MULT = 2.0
 HOLD_YEARS = 2
 FALLBACK_STOP_PCT = 0.15
+# כמה מעל המחיר בשוק מותר להציע בקנייה, לפני שהשרת מסרב (טעות הקלדה, מחיר ישן)
+MAX_ENTRY_ABOVE_MARKET = 0.03
 
 TECH_CSV = ("https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/"
             "main/tech_results.csv")
 
 app = Flask(__name__, static_folder=None)
 LIVE = False          # נדרס מ---live בשורת ההפעלה
+REMOTE = False        # נדרס מ---tailscale בשורת ההפעלה
+TOKEN = ""
+COOKIE = "gd_token"
+
+# טווח הכתובות ש-Tailscale מחלק למכשירים (IPv4 ו-IPv6).
+TAILNET = (ipaddress.ip_network("100.64.0.0/10"),
+           ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+# ---------------------------------------------------------------------------
+# גישה מרחוק
+# ---------------------------------------------------------------------------
+
+def _addr(value: str):
+    try:
+        ip = ipaddress.ip_address((value or "").split("%")[0])
+    except ValueError:
+        return None
+    if getattr(ip, "ipv4_mapped", None):
+        ip = ip.ipv4_mapped
+    return ip
+
+
+def is_local(value: str) -> bool:
+    ip = _addr(value)
+    return bool(ip and ip.is_loopback)
+
+
+def is_tailnet(value: str) -> bool:
+    ip = _addr(value)
+    return bool(ip and any(ip in net for net in TAILNET))
+
+
+def ensure_token() -> str:
+    """הטוקן מ-.env, או טוקן חדש שנשמר שם כדי שיישאר קבוע בין הפעלות."""
+    load_env()
+    tok = os.environ.get("APP_TOKEN", "").strip()
+    if tok:
+        return tok
+    tok = secrets.token_urlsafe(24)
+    path = HERE / ".env"
+    prev = path.read_text(encoding="utf-8") if path.exists() else ""
+    sep = "" if (not prev or prev.endswith("\n")) else "\n"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(f"{sep}APP_TOKEN={tok}\n")
+    os.environ["APP_TOKEN"] = tok
+    return tok
+
+
+def tailscale_ip() -> Optional[str]:
+    # בווינדוס ההתקנה לא תמיד נכנסת ל-PATH, ולכן גם הנתיב הקבוע.
+    for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True,
+                                 text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        ip = (out.stdout or "").strip().splitlines()
+        if ip:
+            return ip[0].strip()
+    return None
+
+
+@app.before_request
+def guard():
+    """במצב מרוחק: רק המחשב עצמו או Tailscale, ומ-Tailscale רק עם טוקן."""
+    if not REMOTE:
+        return None
+    who = request.remote_addr or ""
+    if is_local(who):
+        return None
+    if not is_tailnet(who):
+        return ("גישה רק מהמחשב עצמו או דרך Tailscale.", 403,
+                {"Content-Type": "text/plain; charset=utf-8"})
+    given = request.args.get("t")
+    if given is not None:
+        if hmac.compare_digest(given, TOKEN):
+            resp = redirect(request.path)
+            resp.set_cookie(COOKIE, TOKEN, max_age=30 * 24 * 3600,
+                            httponly=True, samesite="Strict")
+            return resp
+        return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
+    if hmac.compare_digest(request.cookies.get(COOKIE, ""), TOKEN):
+        return None
+    return ("נדרש טוקן. פתח את הכתובת המלאה שהשרת הדפיס בהפעלה.", 401,
+            {"Content-Type": "text/plain; charset=utf-8"})
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +300,110 @@ def entry_dates() -> dict:
     return out
 
 
+def last_trade(sym: str) -> Optional[float]:
+    ok, data = api("GET", f"{DATA_BASE}/v2/stocks/{sym}/trades/latest")
+    try:
+        return float(data["trade"]["p"]) if ok else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _ts(ts) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _day(ts) -> Optional[date]:
+    d = _ts(ts)
+    return d.date() if d else None
+
+
+def leg_levels(order: dict) -> tuple:
+    """היעד והסטופ מתוך הרגליים של פקודת כניסה (OTO או bracket)."""
+    legs = order.get("legs") or []
+    target = next((float(l["limit_price"]) for l in legs
+                   if l.get("type") == "limit" and l.get("limit_price")), None)
+    stop = next((float(l["stop_price"]) for l in legs if l.get("stop_price")), None)
+    return target, stop
+
+
+def closed_orders() -> Optional[list]:
+    """פקודות שנסגרו (בוצעו, בוטלו, פקעו), מהחדשה לישנה. None אם המשיכה נכשלה."""
+    ok, data = api("GET", f"{base()}/v2/orders",
+                   params={"status": "closed", "limit": 500, "direction": "desc",
+                           "nested": "true"})
+    return flatten_orders(data) if ok and isinstance(data, list) else None
+
+
+def fill_dates(orders: Optional[list]) -> dict:
+    """מתי נפתחה כל פוזיציה, לפי הביצועים בפועל אצל אלפקה.
+
+    הולכים מהביצוע האחרון אחורה: כל קנייה שבוצעה נאספת, ומכירה שבוצעה עוצרת
+    את החיפוש לאותו סימול, כי היא סגרה את הפוזיציה הקודמת. הקנייה המוקדמת
+    ביותר שנאספה היא תאריך הכניסה.
+    """
+    out: dict = {}
+    stopped: set = set()
+    for o in orders or []:
+        sym = (o.get("symbol") or "").upper()
+        if not sym or sym in stopped or not o.get("filled_at"):
+            continue
+        d = _day(o["filled_at"])
+        if not d:
+            continue
+        if o.get("side") == "sell":
+            if sym in out:
+                stopped.add(sym)
+            continue
+        out[sym] = d
+    return out
+
+
+_hist_cache: dict = {}
+HIST_TTL = 600
+
+
+def price_history(sym: str, start: date) -> list:
+    """סגירות יומיות מ-start עד היום. אלפקה קודם, Yahoo כגיבוי. נשמר עשר דקות."""
+    key = (sym, start.isoformat())
+    hit = _hist_cache.get(key)
+    if hit and time.time() - hit[0] < HIST_TTL:
+        return hit[1]
+    pts: list = []
+    if creds():
+        ok, data = api("GET", f"{DATA_BASE}/v2/stocks/{sym}/bars",
+                       params={"timeframe": "1Day", "start": start.isoformat(),
+                               "limit": 1000, "feed": "iex", "adjustment": "all",
+                               "sort": "asc"})
+        if ok:
+            for b in data.get("bars") or []:
+                d = _day(b.get("t"))
+                if d and b.get("c") is not None:
+                    pts.append([d.isoformat(), round(float(b["c"]), 4)])
+    if len(pts) < 2:
+        try:
+            r = requests.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
+                params={"period1": int(datetime(start.year, start.month, start.day).timestamp()),
+                        "period2": int(time.time()), "interval": "1d"},
+                headers={"User-Agent": "Mozilla/5.0 (compatible; graham-daily/1.0)"},
+                timeout=10)
+            r.raise_for_status()
+            res = (r.json().get("chart") or {}).get("result") or []
+            stamps = res[0].get("timestamp") or []
+            closes = ((res[0].get("indicators") or {}).get("quote") or [{}])[0].get("close") or []
+            yp = [[datetime.fromtimestamp(s, timezone.utc).date().isoformat(), round(float(c), 4)]
+                  for s, c in zip(stamps, closes) if c is not None]
+            if len(yp) > len(pts):
+                pts = yp
+        except (requests.RequestException, ValueError, IndexError, KeyError, TypeError):
+            pass
+    _hist_cache[key] = (time.time(), pts)
+    return pts
+
+
 # ---------------------------------------------------------------------------
 # נקודות הקצה
 # ---------------------------------------------------------------------------
@@ -227,48 +435,16 @@ def api_watchlist():
     rows = watchlist()
     syms = [r["ticker"] for r in rows]
     quotes = {}
-    charts = {}
+    # בקשה אחת למחיר האחרון של כל הרשימה. בלי גרפים: 90 יום של נרות לכל מניה,
+    # ופנייה נפרדת ל-Yahoo לכל מניה שחסרו לה נתונים, הם מה שהאט את המסך.
     if syms and creds():
         ok, data = api("GET", f"{DATA_BASE}/v2/stocks/trades/latest",
                        params={"symbols": ",".join(syms)})
         if ok:
             for sym, t in (data.get("trades") or {}).items():
                 quotes[sym] = t.get("p")
-        ok, data = api("GET", f"{DATA_BASE}/v2/stocks/bars",
-                       params={"symbols": ",".join(syms), "timeframe": "1Day",
-                               "start": (date.today() - timedelta(days=90)).isoformat(),
-                               "end": (date.today() + timedelta(days=1)).isoformat(),
-                               "limit": 100, "feed": "iex", "sort": "asc"})
-        if ok:
-            for sym, bars in (data.get("bars") or {}).items():
-                charts[sym] = [
-                    round(float(bar["c"]), 4)
-                    for bar in bars
-                    if bar.get("c") is not None
-                ]
-    for sym in syms:
-        if len(charts.get(sym, [])) >= 2:
-            continue
-        try:
-            yahoo = requests.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}",
-                params={"range": "3mo", "interval": "1d", "events": "history"},
-                headers={"User-Agent": "Mozilla/5.0 (compatible; graham-daily/1.0)"},
-                timeout=10,
-            )
-            yahoo.raise_for_status()
-            result = (yahoo.json().get("chart") or {}).get("result") or []
-            quote = ((result[0].get("indicators") or {}).get("quote") or [{}])[0]
-            charts[sym] = [
-                round(float(close), 4)
-                for close in (quote.get("close") or [])
-                if close is not None
-            ]
-        except (requests.RequestException, ValueError, IndexError, KeyError, TypeError):
-            charts.setdefault(sym, [])
     for r in rows:
         r["last"] = quotes.get(r["ticker"]) or r["price"]
-        r["chart"] = charts.get(r["ticker"], [])
         if r["last"]:
             r["levels"] = levels(float(r["last"]), r["atr_pct"])
     return jsonify({"rows": rows})
@@ -280,6 +456,7 @@ def api_positions():
     if not ok:
         return jsonify(data), 502
     opened = entry_dates()
+    filled = fill_dates(closed_orders())
     today = date.today()
     ok_o, orders = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
     orders = flatten_orders(orders) if ok_o and isinstance(orders, list) else None
@@ -287,7 +464,8 @@ def api_positions():
     for p in data:
         sym = p["symbol"]
         gain = float(p.get("unrealized_plpc") or 0)
-        ent = opened.get(sym)
+        # positions.csv קובע כשיש בו שורה; אחרת תאריך הביצוע אצל אלפקה.
+        ent = opened.get(sym) or filled.get(sym)
         due = deadline_for(ent) if ent else None
         action, why = "החזקה", []
         if gain >= PROFIT_TARGET:
@@ -300,7 +478,9 @@ def api_positions():
             if action == "החזקה" and left <= 90:
                 action = "מתקרב למועד"
         elif not ent:
-            why.append("אין תאריך כניסה ב-positions.csv")
+            why.append("אין תאריך כניסה")
+        if ent and sym not in opened:
+            why.append("תאריך הכניסה מאלפקה")
         if action == "החזקה" and gain >= 0.40:
             action = "מתקרב ליעד"
         out.append({
@@ -319,15 +499,94 @@ def api_positions():
 
 @app.get("/api/orders")
 def api_orders():
-    ok, data = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 100})
+    """פקודות מ-30 הימים האחרונים, כולל שבוצעו ושבוטלו, כדי לראות מה קרה לכל אחת."""
+    since = (date.today() - timedelta(days=30)).isoformat()
+    # nested: היעד והסטופ מגיעים כרגליים של פקודת הכניסה ולא כשורות נפרדות
+    ok, data = api("GET", f"{base()}/v2/orders",
+                   params={"status": "all", "limit": 100, "direction": "desc",
+                           "after": since, "nested": "true"})
     if not ok:
         return jsonify(data), 502
+    ok_p, pos = api("GET", f"{base()}/v2/positions")
+    held = {p.get("symbol") for p in pos} if ok_p and isinstance(pos, list) else set()
     return jsonify({"rows": [{
+        "leg_target": leg_levels(o)[0], "leg_stop": leg_levels(o)[1],
         "id": o.get("id"), "ticker": o.get("symbol"), "side": o.get("side"),
-        "type": o.get("type"), "qty": o.get("qty"),
+        "type": o.get("type"), "qty": o.get("qty"), "filled_qty": o.get("filled_qty"),
         "limit_price": o.get("limit_price"), "stop_price": o.get("stop_price"),
+        "filled_avg_price": o.get("filled_avg_price"),
         "status": o.get("status"), "class": o.get("order_class"),
+        "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
+        "held": o.get("symbol") in held,
     } for o in data]})
+
+
+@app.get("/api/history/<sym>")
+def api_history(sym: str):
+    """מהלך המחיר מיום הקנייה, עם הכניסה, היעד, הסטופ והמועד.
+
+    בלי ``order``: הפוזיציה הפתוחה של הסימול. עם ``order=<id>``: קנייה מסוימת
+    שבוצעה, גם אם כבר נמכרה - ואז הגרף נגמר קצת אחרי המכירה ומסמן אותה.
+    """
+    sym = sym.strip().upper()
+    if not sym.replace(".", "").replace("-", "").isalnum() or len(sym) > 10:
+        return jsonify({"error": "סימול לא תקין"}), 400
+    oid = (request.args.get("order") or "").strip()
+    ok_p, pos = api("GET", f"{base()}/v2/positions/{sym}")
+    closed = closed_orders() or []
+    target = stop = None
+    exit_at = exit_price = None
+
+    if oid:
+        buy = next((o for o in closed if o.get("id") == oid), None)
+        if not buy or not buy.get("filled_at") or buy.get("side") != "buy":
+            return jsonify({"error": "הפקודה לא נמצאה בין הקניות שבוצעו"}), 404
+        bought = _ts(buy["filled_at"])
+        ent = bought.date()
+        entry = float(buy.get("filled_avg_price") or 0)
+        target, stop = leg_levels(buy)
+        sells = sorted((o for o in closed
+                        if (o.get("symbol") or "").upper() == sym and o.get("side") == "sell"
+                        and o.get("filled_at") and _ts(o["filled_at"]) and _ts(o["filled_at"]) > bought),
+                       key=lambda o: _ts(o["filled_at"]))
+        if sells:
+            exit_at = _day(sells[0]["filled_at"])
+            exit_price = float(sells[0].get("filled_avg_price") or 0) or None
+    elif ok_p:
+        entry = float(pos.get("avg_entry_price") or 0)
+        ent = entry_dates().get(sym) or fill_dates(closed).get(sym)
+    else:
+        return jsonify(pos), 502
+
+    still_held = ok_p and not exit_at
+    if still_held and target is None:
+        ok_o, orders = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
+        mine = exit_orders_for(flatten_orders(orders), sym) if ok_o and isinstance(orders, list) else []
+        target = next((float(o["limit_price"]) for o in mine
+                       if o.get("type") == "limit" and o.get("limit_price")), None)
+        stop = stop or next((float(o["stop_price"]) for o in mine if o.get("stop_price")), None)
+
+    start = ent or (date.today() - timedelta(days=30))
+    pts = price_history(sym, start - timedelta(days=3))
+    if exit_at:
+        pts = [p for p in pts if p[0] <= (exit_at + timedelta(days=14)).isoformat()]
+    last = float(pos.get("current_price") or 0) if still_held else (exit_price or (pts[-1][1] if pts else 0))
+    until = exit_at.isoformat() if exit_at else "9999"
+    closes = [c for d, c in pts if (not ent or d >= ent.isoformat()) and d <= until]
+    return jsonify({
+        "ticker": sym, "entry": entry, "last": last,
+        "entry_date": ent.isoformat() if ent else None,
+        "deadline": deadline_for(ent).isoformat() if ent and not exit_at else None,
+        "target": target or round(entry * (1 + PROFIT_TARGET), 2),
+        "target_live": target is not None,
+        "stop": stop,
+        "exit_date": exit_at.isoformat() if exit_at else None,
+        "exit_price": exit_price,
+        "held": bool(still_held),
+        "high": max(closes) if closes else None,
+        "low": min(closes) if closes else None,
+        "points": pts,
+    })
 
 
 @app.post("/api/preview")
@@ -369,6 +628,20 @@ def api_order():
         return jsonify({"error": "היעד חייב להיות מעל מחיר הכניסה"}), 400
     if use_stop and not stop < entry:
         return jsonify({"error": "הסטופ חייב להיות מתחת למחיר הכניסה"}), 400
+
+    # בדיקה מול המחיר בשוק. קנייה ב-limit מעל השוק מתבצעת מיד במחיר השוק, והיעד
+    # והסטופ נשארים מחושבים ממחיר הכניסה שהוקלד - כך סטופ יכול לצאת מעל המחיר
+    # בפועל ולמכור מיד בהפסד. אלפקה בודקת את הסטופ מול ה-limit, לא מול השוק.
+    market = last_trade(sym)
+    if market:
+        if entry > market * (1 + MAX_ENTRY_ABOVE_MARKET):
+            return jsonify({"error": (
+                f"מחיר הכניסה {entry:.2f} גבוה ב-{(entry / market - 1) * 100:.0f}% מהמחיר בשוק "
+                f"({market:.2f}). הקנייה הייתה מתבצעת מיד במחיר השוק, והיעד והסטופ היו "
+                f"מחושבים ממחיר שלא שילמת. עדכן את מחיר הכניסה.")}), 400
+        if use_stop and stop >= market:
+            return jsonify({"error": (
+                f"הסטופ {stop:.2f} לא מתחת למחיר בשוק ({market:.2f}); הוא היה מופעל מיד.")}), 400
 
     ok, data = api("POST", f"{base()}/v2/orders",
                    data=json.dumps(entry_order_body(sym, qty, entry, target, stop)))
@@ -436,8 +709,9 @@ def api_renew():
 
 
 def main() -> int:
-    global LIVE
+    global LIVE, REMOTE, TOKEN
     LIVE = "--live" in sys.argv
+    REMOTE = "--tailscale" in sys.argv
     port = 5000
     for i, a in enumerate(sys.argv):
         if a == "--port" and i + 1 < len(sys.argv):
@@ -450,9 +724,20 @@ def main() -> int:
         print("*** מצב חשבון אמיתי. כסף אמיתי. ***\n")
 
     print(f"המסך רץ. פתח בדפדפן:  http://127.0.0.1:{port}")
+    if REMOTE:
+        TOKEN = ensure_token()
+        ts = tailscale_ip()
+        print("\nגישה מהטלפון (Tailscale בלבד). פתח פעם אחת את הכתובת הזאת בטלפון:")
+        if ts:
+            print(f"  http://{ts}:{port}/?t={TOKEN}")
+        else:
+            print(f"  http://<כתובת ה-Tailscale של המחשב>:{port}/?t={TOKEN}")
+            print("  (לא מצאתי את הפקודה tailscale; הכתובת מופיעה באפליקציה של Tailscale)")
+        print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
     print("לעצירה: Ctrl+C\n")
-    # 127.0.0.1 בלבד. לא 0.0.0.0 - אין סיבה שמחשב אחר ברשת יראה את זה.
-    app.run(host="127.0.0.1", port=port, debug=False)
+    # בלי --tailscale: ‏127.0.0.1 בלבד. עם --tailscale: כל הממשקים, אבל guard()
+    # דוחה כל כתובת שאינה המחשב עצמו או Tailscale, ודורש טוקן מ-Tailscale.
+    app.run(host="0.0.0.0" if REMOTE else "127.0.0.1", port=port, debug=False)
     return 0
 
 

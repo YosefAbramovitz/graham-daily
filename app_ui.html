@@ -53,11 +53,19 @@ tr:last-child td{border-bottom:none}
 .lv{display:flex; flex-direction:column; min-width:92px}
 .lv b{font-size:15px; direction:ltr; text-align:left} .lv span{font-size:11px; color:var(--muted)}
 .lv.tp b{color:var(--good-ink)} .lv.sl b{color:var(--bad-ink)}
-.chart-link{display:inline-flex; width:104px; height:42px; align-items:center; justify-content:center;
-  border-radius:8px; background:var(--bg); border:1px solid var(--line); transition:border-color .15s}
-.chart-link:hover{border-color:var(--accent)}
-.chart{display:block; width:96px; height:32px}
-.chart-empty{font-size:11px; color:var(--muted); white-space:nowrap}
+a.tk{color:inherit; text-decoration:none; border-bottom:1px dotted var(--muted)}
+a.tk:hover{color:var(--accent); border-color:var(--accent)}
+.hist td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
+/* הגרף נשאר בתוך החלק הנראה של הכרטיס גם כשהטבלה נגללת לרוחב בטלפון */
+.histbox{padding:6px 0 2px; position:sticky; right:12px; width:min(760px, calc(100vw - 58px))}
+.histsvg{display:block; width:100%; height:auto}
+td.why{display:table-cell}
+@media (max-width:700px){ th.why, td.why{display:none} }
+.histsvg text{font-size:11px; fill:var(--muted); font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.facts{display:flex; flex-wrap:wrap; gap:6px 18px; font-size:12px; color:var(--muted); margin-top:6px}
+.facts b{color:var(--ink); font-weight:600; direction:ltr; unicode-bidi:isolate}
+.legend{display:flex; flex-wrap:wrap; gap:4px 14px; font-size:11px; color:var(--muted); margin-top:4px}
+.legend i{display:inline-block; width:14px; height:0; border-top:2px solid; vertical-align:middle; margin-left:5px}
 .note{flex-basis:100%; font-size:12px; color:var(--muted); margin:2px 0 0; line-height:1.6}
 .err{background:var(--bad-bg); color:var(--bad-ink); border-radius:10px; padding:10px 14px; font-size:13px; margin:10px 0}
 .empty{padding:22px; text-align:center; color:var(--muted); font-size:13px}
@@ -84,20 +92,20 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
   <h2>פוזיציות פתוחות</h2>
   <div class="card"><table>
     <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
-      <th>מה לעשות</th><th>למה</th><th>פקודת יציאה</th></tr></thead>
-    <tbody id="pos"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+      <th>מה לעשות</th><th class="why">למה</th><th>פקודת יציאה</th><th>מאז הקנייה</th></tr></thead>
+    <tbody id="pos"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
   </table></div>
 
-  <h2>פקודות פתוחות</h2>
+  <h2>פקודות <span class="sm" style="display:inline">30 הימים האחרונים, כולל שבוצעו ושבוטלו</span></h2>
   <div class="card"><table>
-    <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th></tr></thead>
-    <tbody id="ord"><tr><td colspan="6" class="empty">טוען…</td></tr></tbody>
+    <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th><th></th></tr></thead>
+    <tbody id="ord"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
   </table></div>
 
   <h2>מועמדות מהמסך <span class="sm" style="display:inline">מי שעבר את גראהם ואת שלב האיכות</span></h2>
   <div class="card"><table>
-    <thead><tr><th>תרשים</th><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
-    <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+    <thead><tr><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
+    <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
   </table></div>
 
   <footer>
@@ -128,28 +136,109 @@ let MARKET_OPEN = false, WATCH = [];
 
 function showErr(msg){ $("err").innerHTML = msg ? `<div class="err">${esc(msg)}</div>` : ""; }
 
-function chartSvg(values){
-  const nums = (values || []).map(Number).filter(Number.isFinite);
-  if (nums.length === 1) {
-    return `<svg class="chart" viewBox="0 0 96 32" role="img" aria-label="מחיר נוכחי בלבד">
-      <line x1="2" y1="16" x2="94" y2="16" stroke="var(--line)" stroke-width="2"/>
-      <circle cx="94" cy="16" r="3" fill="var(--accent)"/>
-    </svg>`;
-  }
-  if (!nums.length) return `<span class="chart-empty">אין נתוני מחיר</span>`;
-  const min = Math.min(...nums), max = Math.max(...nums);
-  const spread = max - min || Math.max(Math.abs(max) * 0.01, 0.01);
-  const points = nums.map((v, i) => {
-    const x = 2 + i * 92 / (nums.length - 1);
-    const y = 30 - (v - min) * 26 / spread;
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const color = nums[nums.length - 1] >= nums[0] ? "var(--good-ink)" : "var(--bad-ink)";
-  return `<svg class="chart" viewBox="0 0 96 32" role="img" aria-label="תרשים מחיר מוקטן">
-    <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2"
-      stroke-linecap="round" stroke-linejoin="round"/>
+// מפתח לכל גרף: P+סימול לפוזיציה פתוחה, O+מזהה לפקודת קנייה שבוצעה
+const OPEN_HIST = new Set(), HIST_HTML = {}, HIST_URL = {};
+
+function histSvg(h, W){
+  const pts = (h.points || []).filter(p => Number.isFinite(p[1]));
+  if (pts.length < 2) return `<p class="sm">אין עדיין מספיק נתוני מחיר מאז הקנייה.</p>`;
+  const H = W < 500 ? 190 : 220, L = 8, R = 92, T = 12, B = 24;
+  const vals = pts.map(p => p[1]);
+  const refs = [h.entry, h.target, h.stop].filter(v => Number.isFinite(v) && v > 0);
+  let lo = Math.min(...vals, ...refs), hi = Math.max(...vals, ...refs);
+  const pad = (hi - lo) * 0.06 || hi * 0.02 || 1; lo -= pad; hi += pad;
+  const x = i => L + i * (W - L - R) / (pts.length - 1);
+  const y = v => T + (hi - v) * (H - T - B) / (hi - lo);
+  const line = pts.map((p, i) => `${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join(" ");
+  const up = vals[vals.length - 1] >= h.entry;
+  const col = up ? "var(--good-ink)" : "var(--bad-ink)";
+  const hline = (v, c, dash, label) => !(Number.isFinite(v) && v > 0) ? "" :
+    `<line x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="${c}"
+       stroke-width="1.5" ${dash ? `stroke-dasharray="${dash}"` : ""}/>
+     <text x="${W - 2}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" style="fill:${c}"
+       direction="ltr">${v.toFixed(2)} ${label}</text>`;
+  // קו אנכי ביום הקנייה, אם הוא בתוך הטווח
+  const ei = h.entry_date ? pts.findIndex(p => p[0] >= h.entry_date) : -1;
+  const buy = ei >= 0 ? `<line x1="${x(ei).toFixed(1)}" x2="${x(ei).toFixed(1)}" y1="${T}" y2="${H - B}"
+      stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/>
+    <circle cx="${x(ei).toFixed(1)}" cy="${y(pts[ei][1]).toFixed(1)}" r="3.5" fill="var(--accent)"/>` : "";
+  const xi = h.exit_date ? pts.findIndex(p => p[0] >= h.exit_date) : -1;
+  const sell = xi >= 0 ? `<line x1="${x(xi).toFixed(1)}" x2="${x(xi).toFixed(1)}" y1="${T}" y2="${H - B}"
+      stroke="var(--muted)" stroke-width="1" stroke-dasharray="2 3"/>
+    <circle cx="${x(xi).toFixed(1)}" cy="${y(h.exit_price || pts[xi][1]).toFixed(1)}" r="4.5"
+      fill="var(--paper)" stroke="var(--ink)" stroke-width="2"/>` : "";
+  const lastI = pts.length - 1;
+  return `<svg class="histsvg" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="מחיר ${esc(h.ticker)} מאז הקנייה">
+    ${hline(h.target, "var(--good-ink)", "5 4", "יעד")}
+    ${hline(h.stop, "var(--bad-ink)", "5 4", "סטופ")}
+    ${hline(h.entry, "var(--muted)", "", "כניסה")}
+    ${buy}${sell}
+    <polyline points="${line}" fill="none" stroke="${col}" stroke-width="2"
+      stroke-linejoin="round" stroke-linecap="round"/>
+    ${h.exit_date ? "" : `<circle cx="${x(lastI).toFixed(1)}" cy="${y(vals[lastI]).toFixed(1)}" r="3.5" fill="${col}"/>`}
+    <text x="${L}" y="${H - 6}" direction="ltr">${esc(pts[0][0])}</text>
+    <text x="${W - R}" y="${H - 6}" text-anchor="end" direction="ltr">${esc(pts[lastI][0])}</text>
   </svg>`;
 }
+
+function histFacts(h){
+  const pct = v => (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
+  const today = new Date(); today.setHours(0,0,0,0);
+  const days = s => Math.round((new Date(s + "T00:00:00") - today) / 86400000);
+  const bits = [];
+  const sold = !!h.exit_date;
+  if (h.entry_date) bits.push(`נקנתה <b>${esc(h.entry_date)}</b> ב-<b>${f2(h.entry)}</b>` +
+    (sold ? "" : `, לפני <b>${-days(h.entry_date)}</b> ימים`));
+  if (sold) {
+    const held = Math.round((new Date(h.exit_date) - new Date(h.entry_date)) / 86400000);
+    bits.push(`נמכרה <b>${esc(h.exit_date)}</b> ב-<b>${f2(h.exit_price)}</b> אחרי <b>${held}</b> ימים`);
+    if (h.entry && h.exit_price) bits.push(`תוצאה <b>${pct(h.exit_price / h.entry - 1)}</b>`);
+  } else if (h.entry && h.last) bits.push(`עכשיו <b>${pct(h.last / h.entry - 1)}</b>`);
+  if (h.entry && h.high) bits.push(`שיא <b>${pct(h.high / h.entry - 1)}</b>`);
+  if (h.entry && h.low) bits.push(`שפל <b>${pct(h.low / h.entry - 1)}</b>`);
+  if (!sold && h.entry && h.last && h.target) bits.push(`עד היעד <b>${pct(h.target / h.last - 1)}</b>`);
+  if (h.deadline) bits.push(`מועד יציאה <b>${esc(h.deadline)}</b>, עוד <b>${days(h.deadline)}</b> ימים`);
+  if (!sold && !h.held) bits.push(`<span class="pill">הפוזיציה כבר לא פתוחה</span>`);
+  if (h.held && !h.target_live) bits.push(`<span class="pill warn">אין פקודת יעד פעילה אצל אלפקה; מוצג היעד המחושב</span>`);
+  return `<div class="facts">${bits.map(b => `<span>${b}</span>`).join("")}</div>
+    <div class="legend"><span><i style="border-color:var(--muted)"></i>כניסה</span>
+      <span><i style="border-color:var(--good-ink);border-top-style:dashed"></i>יעד +50%</span>
+      ${h.stop ? `<span><i style="border-color:var(--bad-ink);border-top-style:dashed"></i>סטופ</span>` : ""}
+      <span>● יום הקנייה</span>${sold ? "<span>○ יום המכירה</span>" : ""}</div>`;
+}
+
+async function toggleHist(key, url){
+  const row = $("h-" + key);
+  if (!row) return;
+  HIST_URL[key] = url;
+  if (!row.hidden) { row.hidden = true; OPEN_HIST.delete(key); return; }
+  row.hidden = false; OPEN_HIST.add(key);
+  await drawHist(key);
+}
+
+async function drawHist(key){
+  const box = $("hb-" + key);
+  if (!box || !HIST_URL[key]) return;
+  if (!HIST_HTML[key]) box.innerHTML = `<p class="sm">טוען…</p>`;
+  try {
+    const h = await jget(HIST_URL[key]);
+    // רוחב אמיתי במקום קנה מידה, כדי שהטקסט בגרף יישאר קריא גם בטלפון
+    const W = Math.round(Math.max(300, Math.min(760, box.clientWidth || 640)));
+    HIST_HTML[key] = histSvg(h, W) + histFacts(h);
+  } catch (e) { HIST_HTML[key] = HIST_HTML[key] || `<p class="sm">${esc(e.message)}</p>`; }
+  const cur = $("hb-" + key);
+  if (cur) cur.innerHTML = HIST_HTML[key];
+}
+
+// שורת הגרף מתחת לשורה בטבלה; נשארת פתוחה גם אחרי רענון
+function histRow(key, cols){
+  const open = OPEN_HIST.has(key);
+  return `<tr class="hist" id="h-${key}" ${open ? "" : "hidden"}>
+    <td colspan="${cols}"><div class="histbox" id="hb-${key}">${open ? (HIST_HTML[key] || "") : ""}</div></td></tr>`;
+}
+function redrawOpen(keys){ keys.forEach(k => { if (OPEN_HIST.has(k)) drawHist(k); }); }
+const keyFor = s => String(s).replace(/[^A-Za-z0-9_-]/g, "_");
 
 async function jget(url){
   const r = await fetch(url);
@@ -199,11 +288,15 @@ async function loadPositions(){
         <td class="num"><span class="${g>=0?'up':'down'}">${g>=0?"+":""}${g.toFixed(1)}%</span>
           <span class="sm">${r.pl>=0?"+":""}${r.pl.toFixed(2)}$</span></td>
         <td><span class="pill ${cls}">${esc(r.action)}</span></td>
-        <td class="sm" style="display:table-cell">${esc(r.why)}</td>
-        ${exitCell(r)}</tr>`;
-    }).join("") : `<tr><td colspan="8" class="empty">אין פוזיציות פתוחות.</td></tr>`;
+        <td class="sm why">${esc(r.why)}</td>
+        ${exitCell(r)}
+        <td><button class="btn" onclick="toggleHist('P${keyFor(r.ticker)}',
+            '/api/history/${encodeURIComponent(r.ticker)}')">גרף</button></td></tr>
+      ${histRow("P" + keyFor(r.ticker), 9)}`;
+    }).join("") : `<tr><td colspan="9" class="empty">אין פוזיציות פתוחות.</td></tr>`;
+    redrawOpen(rows.map(r => "P" + keyFor(r.ticker)));
   } catch (e) {
-    $("pos").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
+    $("pos").innerHTML = `<tr><td colspan="9" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -219,20 +312,46 @@ function exitCell(r){
   return `<td>${pill}${btn}</td>`;
 }
 
+const ORDER_STATUS = {
+  filled: ["בוצעה", "ok"], partially_filled: ["בוצעה חלקית", "warn"],
+  new: ["ממתינה", "warn"], accepted: ["ממתינה", "warn"], pending_new: ["ממתינה", "warn"],
+  held: ["ממתינה לכניסה", ""], accepted_for_bidding: ["ממתינה", "warn"],
+  canceled: ["בוטלה", "no"], expired: ["פקעה", "no"], rejected: ["נדחתה", "no"],
+  replaced: ["הוחלפה", ""], pending_cancel: ["בביטול", "warn"],
+};
+
 async function loadOrders(){
   try {
     const d = await jget("/api/orders");
     const rows = d.rows || [];
-    $("ord").innerHTML = rows.length ? rows.map(r => `<tr>
+    $("ord").innerHTML = rows.length ? rows.map(r => {
+      const [label, cls] = ORDER_STATUS[r.status] || [r.status, ""];
+      const price = r.filled_avg_price
+        ? `${f2(r.filled_avg_price)}<span class="sm">ביצוע</span>`
+        : f2(r.limit_price || r.stop_price);
+      const when = String(r.filled_at || r.submitted_at || "").slice(0, 10);
+      const qty = r.status === "partially_filled" ? `${esc(r.filled_qty)}/${esc(r.qty)}` : esc(r.qty);
+      const key = "O" + keyFor(r.id);
+      const link = (r.side === "buy" && String(r.status).includes("filled"))
+        ? `<button class="btn" onclick="toggleHist('${key}',
+            '/api/history/${encodeURIComponent(r.ticker)}?order=${encodeURIComponent(r.id)}')">גרף</button>` : "";
+      const legs = [r.leg_target ? `יעד ${f2(r.leg_target)}` : "", r.leg_stop ? `סטופ ${f2(r.leg_stop)}` : ""]
+        .filter(Boolean).join(" · ");
+      return `<tr>
         <td class="tk">${esc(r.ticker)}</td>
         <td>${r.side === "buy" ? "קנייה" : "מכירה"}</td>
-        <td>${esc(r.type)}${r.class === "bracket" ? '<span class="sm">bracket</span>' : ""}</td>
-        <td class="num">${esc(r.qty)}</td>
-        <td class="num">${f2(r.limit_price || r.stop_price)}</td>
-        <td><span class="pill">${esc(r.status)}</span></td></tr>`).join("")
-      : `<tr><td colspan="6" class="empty">אין פקודות פתוחות.</td></tr>`;
+        <td>${esc(r.type)}${r.class && r.class !== "simple" ? `<span class="sm">${esc(r.class)}</span>` : ""}
+          ${legs ? `<span class="sm">${legs}</span>` : ""}</td>
+        <td class="num">${qty}</td>
+        <td class="num">${price}</td>
+        <td><span class="pill ${cls}">${esc(label)}</span></td>
+        <td class="num">${esc(when)}</td>
+        <td>${link}</td></tr>
+      ${link ? histRow(key, 8) : ""}`;
+    }).join("") : `<tr><td colspan="8" class="empty">אין פקודות ב-30 הימים האחרונים.</td></tr>`;
+    redrawOpen(rows.map(r => "O" + keyFor(r.id)));
   } catch (e) {
-    $("ord").innerHTML = `<tr><td colspan="6" class="empty">${esc(e.message)}</td></tr>`;
+    $("ord").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -243,12 +362,9 @@ async function loadWatch(){
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
       return `<tr>
-        <td><a class="chart-link" href="https://app.alpaca.markets/stocks/${encodeURIComponent(r.ticker)}"
+        <td><a class="tk" href="https://app.alpaca.markets/stocks/${encodeURIComponent(r.ticker)}"
             target="_blank" rel="noopener noreferrer"
-            title="פתח את ${esc(r.ticker)} ב-Alpaca">${chartSvg(
-              r.chart && r.chart.length ? r.chart : (r.last ? [Number(r.last)] : [])
-            )}</a></td>
-        <td class="tk">${esc(r.ticker)}</td>
+            title="פתח את ${esc(r.ticker)} ב-Alpaca">${esc(r.ticker)}</a></td>
         <td>${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
         <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span></td>
         <td class="num">${f2(r.last)}</td>
@@ -258,7 +374,7 @@ async function loadWatch(){
             title="${blocked?"נפסלה בשלב האיכות":""}"
             onclick="togglePanel('${esc(r.ticker)}')">קנייה</button></td>
       </tr>
-      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="8">
+      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="7">
         <div class="panelbox">
           <div class="fld"><label>מחיר כניסה</label>
             <input id="e-${esc(r.ticker)}" type="number" step="0.01"
@@ -277,9 +393,9 @@ async function loadWatch(){
           <button class="btn primary" onclick="askSend('${esc(r.ticker)}')">שלח פקודה</button>
           <p class="note" id="n-${esc(r.ticker)}"></p>
         </div></td></tr>`}`;
-    }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
   } catch (e) {
-    $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
+    $("watch").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
