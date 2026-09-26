@@ -44,6 +44,16 @@ tr:last-child td{border-bottom:none}
 .btn[disabled]{opacity:.35; cursor:not-allowed}
 .btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
 .btn.primary:hover{opacity:.9; color:#fff}
+.bulk{display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; padding:12px 16px;
+  background:color-mix(in srgb,var(--accent) 8%,var(--paper)); border:1px solid var(--line); border-top:none}
+.bulk>b{font-size:14px; align-self:center}
+.bulk .fld input{width:100px}
+th.ck, td.ck{width:34px; padding-left:0; padding-right:14px}
+td.ck input, th.ck input{width:16px; height:16px; margin:0; cursor:pointer; accent-color:var(--accent)}
+td.ck input[disabled]{cursor:not-allowed; opacity:.3}
+table.mini{font-size:13px; margin:4px 0 8px}
+table.mini th, table.mini td{padding:5px 6px}
+.res{font-size:13px; line-height:1.9}
 .btn.primary.stop{background:var(--bad-ink); border-color:var(--bad-ink)}
 .btn.danger{color:var(--bad-ink); border-color:color-mix(in srgb,var(--bad-ink) 40%,var(--line))}
 .btn.danger:hover:not([disabled]){background:var(--bad-bg); color:var(--bad-ink); border-color:var(--bad-ink)}
@@ -94,7 +104,7 @@ td.why{display:table-cell}
 .err{background:var(--bad-bg); color:var(--bad-ink); border-radius:10px; padding:10px 14px; font-size:13px; margin:10px 0}
 .empty{padding:22px; text-align:center; color:var(--muted); font-size:13px}
 dialog{border:1px solid var(--line); border-radius:14px; background:var(--paper); color:var(--ink);
-  padding:22px; max-width:440px; box-shadow:0 10px 40px rgba(0,0,0,.25)}
+  padding:22px; max-width:min(560px, calc(100vw - 24px)); box-shadow:0 10px 40px rgba(0,0,0,.25)}
 dialog::backdrop{background:rgba(0,0,0,.45)}
 dialog h3{margin:0 0 10px; font-size:17px}
 dialog .row{display:flex; justify-content:space-between; font-size:14px; padding:4px 0; border-bottom:1px solid var(--line)}
@@ -136,9 +146,26 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
   <details class="win" id="w-watch" open>
     <summary><h2>מועמדות מהמסך</h2><span class="pill" id="c-watch">…</span>
       <span class="sm">מי שעבר את גראהם ואת שלב האיכות</span></summary>
+    <div class="bulk" id="bulk" hidden>
+      <b id="bulkn">0</b>
+      <div class="fld"><label>קנייה לפי</label>
+        <div class="seg" id="m-BULK" data-mode="qty">
+          <button type="button" class="on" data-v="qty" onclick="bulkMode('qty')">מניות</button>
+          <button type="button" data-v="amount" onclick="bulkMode('amount')">דולרים</button></div></div>
+      <div class="fld"><label id="bulkql">כמות לכל מניה</label>
+        <input id="bulkq" type="number" step="1" min="1" value="1" oninput="bulkSummary()"></div>
+      <div class="fld"><label>סטופ</label>
+        <label class="sm" style="display:flex;gap:6px;align-items:center;padding-top:6px">
+          <input id="bulkst" type="checkbox" style="width:auto"> לפי ATR</label></div>
+      <span class="sm" id="bulksum"></span>
+      <span class="grow"></span>
+      <button class="btn" onclick="bulkClear()">נקה בחירה</button>
+      <button class="btn primary" onclick="askBulk()">קנה את המסומנות</button>
+    </div>
     <div class="card"><table>
-      <thead><tr><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
-      <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
+      <thead><tr><th class="ck"><input type="checkbox" id="ckall" title="סמן הכול" onchange="bulkAll(this.checked)"></th>
+        <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
+      <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
 
@@ -409,6 +436,8 @@ async function loadWatch(){
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
       return `<tr>
+        <td class="ck"><input type="checkbox" class="pick" data-t="${esc(r.ticker)}" ${blocked?"disabled":""}
+            ${SEL.has(r.ticker) && !blocked ? "checked" : ""} onchange="bulkPick('${esc(r.ticker)}', this.checked)"></td>
         <td><a class="tk" href="https://app.alpaca.markets/stocks/${encodeURIComponent(r.ticker)}"
             target="_blank" rel="noopener noreferrer"
             title="פתח את ${esc(r.ticker)} ב-Alpaca">${esc(r.ticker)}</a></td>
@@ -421,7 +450,7 @@ async function loadWatch(){
             title="${blocked?"נפסלה בשלב האיכות":""}"
             onclick="togglePanel('${esc(r.ticker)}')">קנייה</button></td>
       </tr>
-      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="7">
+      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="8">
         <div class="panelbox">
           <div class="fld"><label>מחיר כניסה</label>
             <input id="e-${esc(r.ticker)}" type="number" step="0.01"
@@ -444,9 +473,10 @@ async function loadWatch(){
           <button class="btn primary" onclick="askSend('${esc(r.ticker)}')">שלח פקודה</button>
           <p class="note" id="n-${esc(r.ticker)}"></p>
         </div></td></tr>`}`;
-    }).join("") : `<tr><td colspan="7" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    bulkSummary();
   } catch (e) {
-    $("watch").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
+    $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -469,7 +499,7 @@ function modeChange(t, v){
   $("ql-"+t).textContent = amount ? "סכום ($)" : "כמות";
   q.step = amount ? "0.01" : "1";
   q.min = amount ? "1" : "1";
-  q.value = amount ? "1000" : "1";
+  q.value = amount ? "100" : "1";
   preview(t);
 }
 
@@ -520,6 +550,110 @@ async function preview(t){
 }
 
 let PENDING = null, MODE = "buy";
+
+// ---- קנייה מרובה: מסמנים מניות, כמות או סכום אחד לכל מניה, ושולחים לכולן
+const SEL = new Set();
+function bulkMode(v){
+  const m = $("m-BULK");
+  if (m.dataset.mode === v) return;
+  m.dataset.mode = v;
+  m.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  const q = $("bulkq"), amount = v === "amount";
+  $("bulkql").textContent = amount ? "סכום לכל מניה ($)" : "כמות לכל מניה";
+  q.step = amount ? "0.01" : "1";
+  q.value = amount ? "100" : "1";
+  bulkSummary();
+}
+function bulkPick(t, on){ on ? SEL.add(t) : SEL.delete(t); bulkSummary(); }
+function bulkAll(on){
+  document.querySelectorAll("#watch input.pick:not([disabled])").forEach(c => {
+    c.checked = on; on ? SEL.add(c.dataset.t) : SEL.delete(c.dataset.t);
+  });
+  bulkSummary();
+}
+function bulkClear(){ bulkAll(false); $("ckall").checked = false; }
+function bulkEntry(t){
+  // מחיר הכניסה מהחלונית של המניה אם שונה שם, אחרת המחיר האחרון
+  const el = $("e-"+t), row = WATCH.find(r => r.ticker === t) || {};
+  const v = el ? parseFloat(el.value) : NaN;
+  return v > 0 ? v : Number(row.last) || 0;
+}
+function bulkSize(entry){
+  const v = parseFloat($("bulkq").value) || 0;
+  if ($("m-BULK").dataset.mode !== "amount") { const w = Math.floor(v); return {whole: w, frac: 0, total: w}; }
+  const s = splitAmount(v, entry);
+  return {...s, total: s.whole + s.frac, amount: v};
+}
+function bulkSummary(){
+  for (const t of [...SEL]) if (!WATCH.some(r => r.ticker === t)) SEL.delete(t);
+  $("bulk").hidden = SEL.size === 0;
+  $("bulkn").textContent = `נבחרו ${SEL.size}`;
+  let cost = 0;
+  for (const t of SEL) { const e = bulkEntry(t); cost += e * bulkSize(e).total; }
+  $("bulksum").textContent = SEL.size ? `עלות משוערת ${cost.toFixed(2)}$` : "";
+  const all = document.querySelectorAll("#watch input.pick:not([disabled])");
+  if ($("ckall")) $("ckall").checked = all.length > 0 && [...all].every(c => c.checked);
+}
+
+async function askBulk(){
+  if (!SEL.size) return;
+  const st = $("bulkst").checked, byAmount = $("m-BULK").dataset.mode === "amount";
+  const list = [], skipped = [];
+  for (const t of [...SEL].sort()) {
+    const row = WATCH.find(r => r.ticker === t) || {};
+    const entry = bulkEntry(t), S = bulkSize(entry);
+    if (!entry || !S.total) { skipped.push(t); continue; }
+    try {
+      const L = await jpost("/api/preview", {entry, atr_pct: row.atr_pct});
+      list.push({ticker: t, entry, S, target: L.target, stop: st ? L.stop : null});
+    } catch (e) { skipped.push(t); }
+  }
+  if (!list.length) { showErr("אין מה לשלוח: הכמות או הסכום קטנים מדי למניות שנבחרו."); return; }
+  MODE = "bulk";
+  PENDING = {list, st, byAmount};
+  const cost = list.reduce((a, o) => a + o.entry * o.S.total, 0);
+  const risk = st ? list.reduce((a, o) => a + (o.entry - o.stop) * o.S.total, 0) : 0;
+  const anyFrac = list.some(o => o.S.frac);
+  openDialog(`
+    <table class="mini"><thead><tr><th>סימול</th><th>כניסה</th><th>מניות</th><th>יעד</th>${st ? "<th>סטופ</th>" : ""}<th>עלות</th></tr></thead><tbody>
+    ${list.map(o => `<tr><td><b>${esc(o.ticker)}</b></td><td class="num">${o.entry.toFixed(2)}</td>
+      <td class="num"${o.S.whole ? "" : ' style="color:var(--bad-ink)"'}>${o.S.whole}${o.S.frac ? ` + ${o.S.frac}` : ""}</td><td class="num">${o.target.toFixed(2)}</td>
+      ${st ? `<td class="num">${o.stop.toFixed(2)}</td>` : ""}<td class="num">${(o.entry*o.S.total).toFixed(2)}$</td></tr>`).join("")}
+    </tbody></table>
+    <div class="row"><span>${list.length} פקודות, עלות משוערת</span><b>${cost.toFixed(2)}$</b></div>
+    ${st ? `<div class="row"><span>סיכון עד הסטופ, יחד</span><b>${risk.toFixed(2)}$</b></div>` : ""}
+    ${list.some(o => !o.S.whole) ? `<p class="sm" style="margin:8px 0 0;color:var(--bad-ink)">בלי יעד +50%: ${esc(list.filter(o => !o.S.whole).map(o => o.ticker).join(", "))}. הסכום לא מספיק למניה שלמה, ולכן נקנה רק שבר מניה, ולו אין פקודת יציאה. הגדל את הסכום אם אתה רוצה יעד.</p>` : ""}
+    ${anyFrac ? `<p class="sm" style="margin:8px 0 0">המספר אחרי + הוא שבר מניה, שנשלח בפקודת יום נפרדת בלי יעד ומבוטל אם לא בוצע היום.</p>` : ""}
+    ${skipped.length ? `<p class="sm" style="margin:8px 0 0">לא ייכללו (כמות או סכום קטנים מדי): ${esc(skipped.join(", "))}</p>` : ""}`,
+    "BUY", `שלח ${list.length} פקודות`, "קנייה מרובה");
+}
+
+async function sendBulk(){
+  const {list, st, byAmount} = PENDING, out = [];
+  let ok = 0;
+  for (const o of list) {
+    $("dlgsend").textContent = `שולח ${o.ticker}…`;
+    try {
+      const r = await jpost("/api/order", {ticker: o.ticker, entry: o.entry,
+        mode: byAmount ? "amount" : "qty", qty: byAmount ? null : o.S.whole,
+        amount: byAmount ? o.S.amount : null, target: o.target, use_stop: st, stop: o.stop, confirm: "BUY"});
+      const parts = [];
+      if (r.id) parts.push(`${r.qty} מניות: ${r.status}`);
+      if (r.fraction_id) parts.push(`שבר ${r.fraction}: ${r.fraction_status}`);
+      if (r.fraction_error) parts.push(`השבר נדחה: ${r.fraction_error}`);
+      out.push(`<span class="up">✓</span> <b>${esc(o.ticker)}</b> ${esc(parts.join(" · "))}`);
+      ok++; SEL.delete(o.ticker);
+    } catch (e) {
+      out.push(`<span class="down">✗</span> <b>${esc(o.ticker)}</b> ${esc(e.message)}`);
+    }
+  }
+  $("dlg").close();
+  const good = ok === list.length;
+  $("err").innerHTML = `<div class="err res" style="${good ? "background:var(--good-bg);color:var(--good-ink)" : ""}">` +
+    `נשלחו ${ok} מתוך ${list.length}.<br>${out.join("<br>")}</div>`;
+  document.querySelectorAll("#watch input.pick").forEach(c => c.checked = SEL.has(c.dataset.t));
+  bulkSummary();
+}
 function openDialog(html, word, sendLabel, title){
   $("dlgtitle").textContent = title || "אישור פקודה";
   $("dlgbody").innerHTML = html;
@@ -587,10 +721,13 @@ function askRenew(t){
 
 $("dlgsend").addEventListener("click", async () => {
   const word = MODE === "renew" ? "RENEW" : MODE === "cancel" ? "" : "BUY";
+  const label = $("dlgsend").textContent;
   if (word && $("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    if (MODE === "cancel") {
+    if (MODE === "bulk") {
+      await sendBulk();
+    } else if (MODE === "cancel") {
       await jpost("/api/cancel", {id: PENDING.id, confirm: "CANCEL"});
       $("dlg").close();
       $("err").innerHTML = `<div class="err" style="background:var(--good-bg);color:var(--good-ink)">` +
@@ -618,7 +755,7 @@ $("dlgsend").addEventListener("click", async () => {
     }
     refresh();
   } catch (e) { showErr(e.message); }
-  finally { $("dlgsend").disabled = false; }
+  finally { $("dlgsend").disabled = false; $("dlgsend").textContent = label; }
 });
 
 function refresh(){ loadStatus(); loadPositions(); loadOrders(); drawChart(); }
