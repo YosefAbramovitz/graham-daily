@@ -1175,6 +1175,27 @@ def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") ->
 
 
 
+class LazyTLS:
+    """עוטף SSLContext כך שלחיצת היד של TLS תקרה בתהליכון של החיבור, לא בלולאת
+    ה-accept הראשית. בלי זה, לקוח אחד שפותח חיבור ולא משלים לחיצת יד (סורק,
+    לקוח תקוע) משתק את כל השרת - ובאינטרנט הפתוח זה קורה כל הזמן."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    def wrap_socket(self, sock, server_side=True, **_):
+        return self.ctx.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
+
+
+def request_handler():
+    """מטפל בקשות עם זמן קצוב לחיבור: לקוח איטי או תקוע משחרר את התהליכון."""
+    from werkzeug.serving import WSGIRequestHandler
+
+    class TimedHandler(WSGIRequestHandler):
+        timeout = 30
+    return TimedHandler
+
+
 def start_public(port: int):
     """--public: תעודה (מנפיק/מחדש לפי הצורך), HTTPS לכולם ו-HTTP מקומי למחשב."""
     import ssl
@@ -1264,7 +1285,8 @@ def main() -> int:
     # רק את המחשב והרשת הפנימית, ודורש טוקן או מכשיר מאושר מהרשת. עם --public:
     # HTTPS לכל כתובת, ותמיד טוקן או מכשיר מאושר (חוץ מהמחשב עצמו).
     app.run(host="0.0.0.0" if REMOTE else "127.0.0.1", port=port, debug=False,
-            ssl_context=ctx, threaded=True)
+            ssl_context=LazyTLS(ctx) if ctx else None, threaded=True,
+            request_handler=request_handler())
     return 0
 
 if __name__ == "__main__":
