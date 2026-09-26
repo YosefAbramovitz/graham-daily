@@ -27,6 +27,10 @@
 אותה פעם אחת בטלפון, והטוקן נשמר שם בעוגייה ל-30 יום. מהמחשב עצמו לא נדרש
 טוקן.
 
+בכל הפעלה עם --lan הקישור נשלח גם לטלגרם, אם ב-.env מוגדרים
+TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. את ה-chat_id
+לא צריך לחפש: שולחים לבוט הודעה אחת, והשרת מוצא אותו בהפעלה הבאה ושומר.
+
 אין הצפנה (http ולא https), ולכן זה מתאים לרשת הביתית ולא לרשת ציבורית.
 בהפעלה הראשונה ווינדוס עשוי לשאול אם לאפשר לפייתון גישה לרשת: לאשר לרשת
 פרטית בלבד.
@@ -937,6 +941,63 @@ def api_live():
     })
 
 
+# ---------------------------------------------------------------------------
+# הקישור לטלפון בטלגרם
+# ---------------------------------------------------------------------------
+
+def _env_set(key: str, value: str) -> None:
+    """מוסיף שורה ל-.env (בלי לגעת בשאר) ומעדכן את הסביבה."""
+    path = HERE / ".env"
+    prev = path.read_text(encoding="utf-8") if path.exists() else ""
+    sep = "" if (not prev or prev.endswith("\n")) else "\n"
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(f"{sep}{key}={value}\n")
+    os.environ[key] = value
+
+
+def telegram_chat(bot: str) -> Optional[str]:
+    """ה-chat_id מ-.env, או מההודעה האחרונה שנשלחה לבוט (ואז נשמר ב-.env)."""
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if chat:
+        return chat
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{bot}/getUpdates", timeout=15)
+        ups = r.json().get("result") or []
+    except (requests.RequestException, ValueError):
+        return None
+    for u in reversed(ups):
+        msg = u.get("message") or u.get("edited_message") or {}
+        cid = (msg.get("chat") or {}).get("id")
+        if cid is not None and (msg.get("chat") or {}).get("type") == "private":
+            _env_set("TELEGRAM_CHAT_ID", str(cid))
+            return str(cid)
+    return None
+
+
+def send_link_telegram(link: str) -> str:
+    """שולח את קישור הכניסה לטלפון. מחזיר שורה להדפסה. לא זורק שגיאות."""
+    load_env()
+    bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not bot:
+        return ("טלגרם: לא מוגדר. להפעלה: צור בוט ב-@BotFather, הוסף ל-.env שורה "
+                "TELEGRAM_BOT_TOKEN=..., שלח לבוט הודעה כלשהי, והפעל מחדש.")
+    chat = telegram_chat(bot)
+    if not chat:
+        return "טלגרם: לא מצאתי צ'אט. שלח לבוט הודעה כלשהי (למשל /start) והפעל מחדש."
+    text = ("מסך המסחר עלה. לפתוח בטלפון, על ה-Wi-Fi של הבית:\n" + link +
+            "\n\nהקישור מאפשר לשלוח פקודות. אל תעביר אותו הלאה.")
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15,
+                          json={"chat_id": chat, "text": text,
+                                "disable_web_page_preview": True})
+        if r.ok and r.json().get("ok"):
+            return "טלגרם: הקישור נשלח לטלפון."
+        return f"טלגרם: השליחה נכשלה ({r.status_code}). בדוק את TELEGRAM_BOT_TOKEN ו-TELEGRAM_CHAT_ID."
+    except (requests.RequestException, ValueError) as exc:
+        return f"טלגרם: אין חיבור ({type(exc).__name__})."
+
+
+
 def main() -> int:
     global LIVE, REMOTE, TOKEN
     LIVE = "--live" in sys.argv
@@ -958,7 +1019,9 @@ def main() -> int:
         ip = lan_ip()
         print("\nגישה מהטלפון (רשת ביתית בלבד, הטלפון על אותו Wi-Fi). פתח פעם אחת בטלפון:")
         if ip:
-            print(f"  http://{ip}:{port}/?t={TOKEN}")
+            link = f"http://{ip}:{port}/?t={TOKEN}"
+            print(f"  {link}")
+            print("  " + send_link_telegram(link))
         else:
             print(f"  http://<כתובת המחשב ברשת>:{port}/?t={TOKEN}")
             print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
