@@ -736,6 +736,165 @@ def api_renew():
                     "cancelled": len(ids)})
 
 
+# ---------------------------------------------------------------------------
+# מסך סטטוס הפוזיציות - רענון מהיר
+# ---------------------------------------------------------------------------
+
+# תאריכי הביצוע דורשים משיכה של 500 פקודות סגורות. ברענון כל כמה שניות זה
+# בזבוז, והם כמעט לא משתנים - לכן נשמרים לכמה דקות, ומתרעננים מיד כשמופיע
+# סימול חדש (קנייה שזה עתה בוצעה).
+FILL_CACHE_SECONDS = 600
+_fills = {"at": 0.0, "syms": frozenset(), "data": {}}
+
+
+def cached_fill_dates(syms) -> dict:
+    now = time.time()
+    syms = frozenset(syms)
+    if (now - _fills["at"] > FILL_CACHE_SECONDS) or not syms <= _fills["syms"]:
+        _fills.update(at=now, syms=syms, data=fill_dates(closed_orders()))
+    return _fills["data"]
+
+
+def latest_prices(syms) -> dict:
+    """מחיר העסקה האחרונה לכל הסימולים, בבקשה אחת."""
+    if not syms:
+        return {}
+    ok, data = api("GET", f"{DATA_BASE}/v2/stocks/trades/latest",
+                   params={"symbols": ",".join(syms)})
+    if not ok:
+        return {}
+    out = {}
+    for sym, t in (data.get("trades") or {}).items():
+        try:
+            out[sym] = {"p": float(t["p"]), "t": t.get("t")}
+        except (KeyError, TypeError, ValueError):
+            pass
+    return out
+
+
+def _f(v) -> Optional[float]:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def live_row(p: dict, quote: Optional[dict], ent: Optional[date], from_csv: bool,
+             orders: Optional[list], today: date) -> dict:
+    """שורה אחת במסך הסטטוס. המחיר מהעסקה האחרונה אם יש, אחרת מאלפקה."""
+    sym = p["symbol"]
+    qty = _f(p.get("qty")) or 0.0
+    entry = _f(p.get("avg_entry_price")) or 0.0
+    last = (quote or {}).get("p") or _f(p.get("current_price")) or 0.0
+    prev = _f(p.get("lastday_price"))
+    gain = (last / entry - 1) if entry else 0.0
+    target = round(entry * (1 + PROFIT_TARGET), 2) if entry else None
+    due = deadline_for(ent) if ent else None
+    exits = exit_orders_for(orders or [], sym)
+    stop = next((_f(o.get("stop_price")) for o in exits if o.get("stop_price")), None)
+    limit = next((_f(o.get("limit_price")) for o in exits
+                  if o.get("type") == "limit" and o.get("limit_price")), None)
+
+    action, why = "החזקה", []
+    if gain >= PROFIT_TARGET:
+        action = "מכירה"; why.append(f"הרווח {gain*100:.0f}% מעל יעד ה-50%")
+    if due and today > due:
+        action = "מכירה"; why.append(f"חלף המועד {due.isoformat()}")
+    elif due and action == "החזקה" and (due - today).days <= 90:
+        action = "מתקרב למועד"
+    if action == "החזקה" and gain >= 0.40:
+        action = "מתקרב ליעד"
+    if not ent:
+        why.append("אין תאריך כניסה")
+    elif not from_csv:
+        why.append("תאריך הכניסה מאלפקה")
+
+    return {
+        "ticker": sym, "qty": qty, "entry": entry, "last": last,
+        "quote_time": (quote or {}).get("t"),
+        "value": round(qty * last, 2), "cost": round(qty * entry, 2),
+        "pl": round(qty * (last - entry), 2), "gain": round(gain, 4),
+        "day_change": round(last / prev - 1, 4) if prev else None,
+        "day_pl": round(qty * (last - prev), 2) if prev else None,
+        "target": target, "exit_limit": limit, "stop": stop,
+        # כמה מהדרך מהכניסה ליעד עברנו, 0 עד 1 (שלילי כשמתחת לכניסה)
+        "progress": round(gain / PROFIT_TARGET, 4) if entry else None,
+        "entry_date": ent.isoformat() if ent else None,
+        "held_days": (today - ent).days if ent else None,
+        "deadline": due.isoformat() if due else None,
+        "deadline_days": (due - today).days if due else None,
+        "action": action, "why": "; ".join(why),
+        **{f"exit_{k}": v for k, v in exit_state(orders, sym, today).items()},
+    }
+
+
+@app.get("/positions")
+def positions_page():
+    return send_from_directory(HERE, "positions_ui.html")
+
+
+@app.get("/api/live")
+def api_live():
+    """כל מה שמסך הסטטוס צריך, בקריאה אחת: חשבון, שוק, פוזיציות ופקודות ממתינות."""
+    ok, pos = api("GET", f"{base()}/v2/positions")
+    if not ok:
+        return jsonify(pos), 502
+    ok_c, clock = api("GET", f"{base()}/v2/clock")
+    ok_a, acct = api("GET", f"{base()}/v2/account")
+    ok_o, raw = api("GET", f"{base()}/v2/orders",
+                    params={"status": "open", "limit": 500, "nested": "true"})
+    orders = flatten_orders(raw) if ok_o and isinstance(raw, list) else None
+
+    syms = [p["symbol"] for p in pos]
+    opened = entry_dates()
+    need = [s for s in syms if s not in opened]
+    filled = cached_fill_dates(need) if need else {}
+    quotes = latest_prices(syms)
+    today = date.today()
+    rows = [live_row(p, quotes.get(p["symbol"]), opened.get(p["symbol"]) or filled.get(p["symbol"]),
+                     p["symbol"] in opened, orders, today) for p in pos]
+    rows.sort(key=lambda r: -(r["value"] or 0))
+
+    # קניות שנשלחו ועוד לא בוצעו (או בוצעו חלקית) - עוד לא פוזיציה
+    pending = []
+    if ok_o and isinstance(raw, list):
+        for o in raw:
+            if o.get("side") != "buy":
+                continue
+            target, stop = leg_levels(o)
+            pending.append({
+                "id": o.get("id"), "ticker": o.get("symbol"), "status": o.get("status"),
+                "type": o.get("type"), "class": o.get("order_class"),
+                "qty": o.get("qty"), "notional": o.get("notional"),
+                "filled_qty": o.get("filled_qty"), "limit_price": o.get("limit_price"),
+                "tif": o.get("time_in_force"), "submitted_at": o.get("submitted_at"),
+                "target": target, "stop": stop,
+            })
+
+    equity = _f(acct.get("equity")) if ok_a else None
+    last_eq = _f(acct.get("last_equity")) if ok_a else None
+    return jsonify({
+        "now": datetime.now(timezone.utc).isoformat(),
+        "live": LIVE,
+        "market_open": clock.get("is_open") if ok_c else None,
+        "next_open": clock.get("next_open") if ok_c else None,
+        "next_close": clock.get("next_close") if ok_c else None,
+        "account": {
+            "equity": equity, "cash": _f(acct.get("cash")) if ok_a else None,
+            "buying_power": _f(acct.get("buying_power")) if ok_a else None,
+            "day_pl": round(equity - last_eq, 2) if equity is not None and last_eq else None,
+            "day_pct": round(equity / last_eq - 1, 4) if equity is not None and last_eq else None,
+        },
+        "totals": {
+            "value": round(sum(r["value"] for r in rows), 2),
+            "cost": round(sum(r["cost"] for r in rows), 2),
+            "pl": round(sum(r["pl"] for r in rows), 2),
+        },
+        "orders_ok": orders is not None,
+        "rows": rows, "pending": pending,
+    })
+
+
 def main() -> int:
     global LIVE, REMOTE, TOKEN
     LIVE = "--live" in sys.argv

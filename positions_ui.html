@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>סטטוס פוזיציות</title>
+<style>
+:root{
+  --bg:#faf8f4; --paper:#fff; --ink:#1c1a17; --muted:#6f6a60; --line:#e5e1d8;
+  --accent:#8a6a3b; --good-bg:#e4efe2; --good-ink:#2f6b34; --bad-bg:#f3e6e4; --bad-ink:#94413a;
+  --warm-bg:#f6eeda; --warm-ink:#8a6320; --unknown-bg:#eceae4; --unknown-ink:#8c867a;
+  --track:#ece8df; --shadow:0 1px 3px rgba(28,26,23,.07);
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
+  --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
+  --warm-bg:#352d1c; --warm-ink:#d9b56e; --unknown-bg:#2a2824; --unknown-ink:#8b857a;
+  --track:#2c2a25; --shadow:0 1px 3px rgba(0,0,0,.35);
+}}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.wrap{max-width:1180px; margin:0 auto; padding:22px 16px 60px}
+.top{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px}
+h1{font-size:23px; margin:0}
+h2{font-size:16px; margin:26px 0 10px; display:flex; align-items:center; gap:8px}
+a.back{font-size:13px; color:var(--muted); text-decoration:none; border-bottom:1px dotted var(--muted)}
+a.back:hover{color:var(--accent); border-color:var(--accent)}
+.grow{flex:1}
+.pill{font-size:12px; font-weight:600; padding:3px 11px; border-radius:999px; background:var(--unknown-bg); color:var(--unknown-ink); white-space:nowrap}
+.pill.ok{background:var(--good-bg); color:var(--good-ink)}
+.pill.no{background:var(--bad-bg); color:var(--bad-ink)}
+.pill.warn{background:var(--warm-bg); color:var(--warm-ink)}
+.live{display:inline-flex; align-items:center; gap:7px; font-size:12px; color:var(--muted)}
+.dot{width:8px; height:8px; border-radius:50%; background:var(--unknown-ink)}
+.dot.on{background:var(--good-ink); animation:pulse 2s infinite}
+.dot.stale{background:var(--bad-ink)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good-ink) 55%,transparent)}
+  70%{box-shadow:0 0 0 7px transparent} 100%{box-shadow:0 0 0 0 transparent}}
+.btn{font:inherit; font-size:12px; font-weight:600; padding:5px 13px; border-radius:999px;
+  border:1px solid var(--line); background:transparent; color:var(--ink); cursor:pointer}
+.btn:hover{border-color:var(--accent); color:var(--accent)}
+
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px}
+.tile{background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:12px 16px; box-shadow:var(--shadow)}
+.tile span{display:block; font-size:12px; color:var(--muted)}
+.tile b{display:block; font-size:21px; font-variant-numeric:tabular-nums; direction:ltr; text-align:right; margin-top:2px}
+.tile i{display:block; font-style:normal; font-size:12px; direction:ltr; text-align:right; font-variant-numeric:tabular-nums}
+
+.grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px}
+.pos{background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:14px 16px 12px; box-shadow:var(--shadow)}
+.pos.sell{border-color:color-mix(in srgb,var(--bad-ink) 55%,var(--line))}
+.ph{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+.tk{font-weight:700; font-size:18px; font-family:ui-monospace,Menlo,Consolas,monospace}
+.qty{font-size:12px; color:var(--muted)}
+.pr{display:flex; align-items:baseline; gap:10px; margin:6px 0 2px; flex-wrap:wrap}
+.price{font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; direction:ltr; border-radius:6px; padding:0 4px; transition:background .8s}
+.price.fu{background:var(--good-bg)} .price.fd{background:var(--bad-bg)}
+.chg{font-size:13px; font-weight:600; font-variant-numeric:tabular-nums}
+bdi{direction:ltr; unicode-bidi:isolate; font-variant-numeric:tabular-nums}
+.up{color:var(--good-ink)} .down{color:var(--bad-ink)} .flat{color:var(--muted)}
+.plrow{display:flex; gap:14px; flex-wrap:wrap; font-size:13px; color:var(--muted); margin-bottom:10px}
+.plrow b{font-variant-numeric:tabular-nums}
+
+/* מסילה מהסטופ/‎-25% (ימין) עד היעד ‎+50% (שמאל), כיוון קריאה בעברית */
+.rail{position:relative; height:10px; border-radius:999px; background:var(--track); margin:18px 0 6px}
+.fill{position:absolute; top:0; bottom:0; border-radius:999px}
+.fill.g{background:var(--good-ink)} .fill.r{background:var(--bad-ink)}
+.mk{position:absolute; top:-5px; width:2px; height:20px; background:var(--muted)}
+.mk.now{width:12px; height:12px; top:-1px; border-radius:50%; background:var(--paper); border:2px solid var(--ink); transform:translateX(50%)}
+.mk.stop{background:var(--bad-ink)}
+.mk.tgt{background:var(--good-ink)}
+.rl{display:flex; justify-content:space-between; font-size:11px; color:var(--muted)}
+.rl b{font-weight:600; color:var(--ink)}
+.facts{display:grid; grid-template-columns:repeat(3,1fr); gap:6px 10px; margin-top:12px; padding-top:10px; border-top:1px solid var(--line)}
+.facts div span{display:block; font-size:11px; color:var(--muted)}
+.facts div b{display:block; font-size:13px; font-weight:600; font-variant-numeric:tabular-nums}
+.facts div i{display:block; font-style:normal; font-size:11px; color:var(--muted)}
+.why{font-size:12px; color:var(--muted); margin-top:8px}
+.foot{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px}
+
+.card{background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); overflow-x:auto}
+table{width:100%; border-collapse:collapse; font-size:14px}
+th{text-align:right; font-size:11px; font-weight:600; color:var(--muted); padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap}
+td{padding:9px 12px; border-bottom:1px solid var(--line); white-space:nowrap}
+tr:last-child td{border-bottom:none}
+.num{font-variant-numeric:tabular-nums; direction:ltr; text-align:left}
+.empty{padding:26px; text-align:center; color:var(--muted); font-size:14px; background:var(--paper);
+  border:1px dashed var(--line); border-radius:14px}
+.err{background:var(--bad-bg); color:var(--bad-ink); border-radius:10px; padding:10px 14px; font-size:13px; margin:10px 0}
+.sm{font-size:11px; color:var(--muted)}
+footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:28px}
+@media (max-width:420px){ .grid{grid-template-columns:1fr} .price{font-size:23px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>סטטוס פוזיציות</h1>
+    <span id="acct" class="pill">…</span>
+    <span id="mkt" class="pill">…</span>
+    <span class="grow"></span>
+    <span class="live"><span class="dot" id="dot"></span><span id="age">טוען…</span></span>
+    <button class="btn" id="now" onclick="load(true)">רענן</button>
+    <a class="back" href="/">למסך המסחר</a>
+  </div>
+  <div id="err"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <h2>פוזיציות פתוחות <span class="pill" id="c-pos">…</span></h2>
+  <div class="grid" id="grid"><div class="empty">טוען…</div></div>
+
+  <h2>קניות שנשלחו ועוד לא בוצעו <span class="pill" id="c-pend">…</span></h2>
+  <div id="pend"></div>
+
+  <footer>
+    המחירים מהעסקה האחרונה אצל אלפקה. המסך מתרענן כל 10 שניות כשהשוק פתוח ופעם בדקה כשהוא סגור,
+    ועוצר כשהלשונית לא מוצגת. בחשבון נייר בלי מנוי נתונים, המחיר מגיע ממקור IEX ועשוי להיות
+    שונה מעט מהמחיר המאוחד.
+    <br>מסילת ההתקדמות: מ־<bdi dir="ltr">-25%</bdi> (או מהסטופ, אם יש) בימין ועד יעד גראהם של <bdi dir="ltr">+50%</bdi> בשמאל. הקו האפור הוא מחיר הכניסה, והנקודה היא המחיר עכשיו.
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const usd = (v, d=2) => v == null ? "—" : (v < 0 ? "-" : "") + "$" + Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d, maximumFractionDigits:d});
+const sgnUsd = v => v == null ? "—" : (v >= 0 ? "+" : "") + usd(v);
+const pct = (v, d=1) => v == null ? "—" : (v >= 0 ? "+" : "") + (v*100).toFixed(d) + "%";
+const dir = v => v == null ? "flat" : v > 0 ? "up" : v < 0 ? "down" : "flat";
+const n = x => `<bdi dir="ltr">${x}</bdi>`;
+const fmtQty = q => Number.isInteger(+q) ? String(+q) : (+q).toFixed(4).replace(/0+$/,"");
+
+let LAST = {}, LAST_OK = 0, OPEN = null, TIMER = null, BUSY = false;
+
+function tile(label, value, sub, cls=""){
+  return `<div class="tile"><span>${label}</span><b class="${cls}">${value}</b>${sub ? `<i class="${cls}">${sub}</i>` : ""}</div>`;
+}
+
+function rail(r){
+  // ‏-25% בצד ימין, ‎+50% בצד שמאל. סטופ נמוך יותר מרחיב את הטווח.
+  let lo = -0.25;
+  const stopG = r.stop && r.entry ? r.stop / r.entry - 1 : null;
+  if (stopG != null) lo = Math.min(lo, stopG - 0.03);
+  const hi = 0.5, span = hi - lo;
+  const at = g => Math.max(0, Math.min(100, (g - lo) / span * 100));   // % מימין
+  const zero = at(0), now = at(r.gain);
+  const fill = r.gain >= 0
+    ? `<div class="fill g" style="right:${zero}%;width:${now-zero}%"></div>`
+    : `<div class="fill r" style="right:${now}%;width:${zero-now}%"></div>`;
+  const stop = stopG != null ? `<div class="mk stop" style="right:${at(stopG)}%" title="סטופ"></div>` : "";
+  return `<div class="rail">${fill}
+      <div class="mk" style="right:${zero}%" title="כניסה"></div>${stop}
+      <div class="mk tgt" style="right:100%" title="יעד"></div>
+      <div class="mk now" style="right:${now}%" title="עכשיו"></div></div>
+    <div class="rl"><span>${stopG != null ? `סטופ <b>${n(usd(r.stop))}</b>` : n(pct(lo, 0))}</span>
+      <span>${r.progress != null && r.gain > 0 ? `${n(Math.round(r.progress*100) + "%")} מהדרך ליעד` : r.gain < 0 ? "מתחת לכניסה" : ""}</span>
+      <span>יעד <b>${n(usd(r.target))}</b> ${n("+50%")}</span></div>`;
+}
+
+function exitPill(r){
+  const d = r.exit_days_left;
+  if (r.exit_state === "none") return `<span class="pill no">אין פקודת יציאה</span>`;
+  if (r.exit_state === "expiring") return `<span class="pill warn">פקודת היציאה פוקעת בעוד ${d} ימים</span>`;
+  if (r.exit_state === "ok") return `<span class="pill ok">פקודת יציאה פעילה${d != null ? ` · ${d} ימים` : ""}</span>`;
+  return `<span class="pill">פקודת יציאה: לא ידוע</span>`;
+}
+
+function card(r){
+  const prev = LAST[r.ticker];
+  const flash = prev != null && r.last !== prev ? (r.last > prev ? "fu" : "fd") : "";
+  const act = r.action === "מכירה" ? "no" : r.action === "החזקה" ? "ok" : "warn";
+  const dl = r.deadline_days;
+  return `<div class="pos ${r.action === "מכירה" ? "sell" : ""}">
+    <div class="ph"><span class="tk">${esc(r.ticker)}</span>
+      <span class="qty">${n(fmtQty(r.qty))} מניות · ${n(usd(r.value))}</span>
+      <span class="grow"></span><span class="pill ${act}">${esc(r.action)}</span></div>
+    <div class="pr"><span class="price ${flash}" data-t="${esc(r.ticker)}">${usd(r.last)}</span>
+      <span class="chg ${dir(r.day_change)}">היום ${n(pct(r.day_change, 2))}${r.day_pl != null ? ` · ${n(sgnUsd(r.day_pl))}` : ""}</span></div>
+    <div class="plrow"><span>רווח: <b class="${dir(r.pl)}">${n(pct(r.gain))} · ${n(sgnUsd(r.pl))}</b></span>
+      <span>כניסה: <b>${n(usd(r.entry))}</b></span></div>
+    ${rail(r)}
+    <div class="facts">
+      <div><span>נקנתה</span><b>${n(esc(r.entry_date || "—"))}</b></div>
+      <div><span>ימים בהחזקה</span><b>${r.held_days ?? "—"}</b></div>
+      <div><span>מועד יציאה</span><b class="${dl != null && dl <= 90 ? "down" : ""}">${n(esc(r.deadline || "—"))}</b>${dl != null ? `<i>עוד ${dl} ימים</i>` : ""}</div>
+    </div>
+    ${r.why ? `<div class="why">${esc(r.why)}</div>` : ""}
+    <div class="foot">${exitPill(r)}${r.exit_limit && r.target && Math.abs(r.exit_limit - r.target) > 0.01
+        ? `<span class="pill">יעד בפקודה ${n(usd(r.exit_limit))}</span>` : ""}</div>
+  </div>`;
+}
+
+const ORDER_STATUS = {new:"ממתינה", accepted:"ממתינה", pending_new:"בשליחה",
+  partially_filled:"בוצעה חלקית", held:"מוחזקת", accepted_for_bidding:"ממתינה", pending_replace:"בהחלפה"};
+
+function pendingTable(rows){
+  if (!rows.length) return `<div class="empty">אין קניות פתוחות. כל מה שנשלח כבר בוצע, בוטל או פקע.</div>`;
+  return `<div class="card"><table><thead><tr><th>סימול</th><th>מצב</th><th>כמות</th><th>בוצע</th>
+      <th>מחיר לימיט</th><th>יעד</th><th>סטופ</th><th>תוקף</th><th>נשלחה</th></tr></thead><tbody>
+    ${rows.map(o => `<tr><td><b>${esc(o.ticker)}</b></td>
+      <td><span class="pill ${o.status === "partially_filled" ? "ok" : "warn"}">${esc(ORDER_STATUS[o.status] || o.status)}</span></td>
+      <td class="num">${o.qty != null ? fmtQty(o.qty) : usd(+o.notional)}</td>
+      <td class="num">${fmtQty(o.filled_qty || 0)}</td>
+      <td class="num">${o.limit_price ? usd(+o.limit_price) : "שוק"}</td>
+      <td class="num">${o.target ? usd(o.target) : "—"}</td>
+      <td class="num">${o.stop ? usd(o.stop) : "—"}</td>
+      <td>${o.tif === "day" ? "יום" : o.tif === "gtc" ? "GTC" : esc(o.tif || "")}</td>
+      <td class="num sm">${o.submitted_at ? new Date(o.submitted_at).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : ""}</td></tr>`).join("")}
+    </tbody></table></div>
+    <p class="sm">קנייה שנשלחה כשהשוק סגור תתבצע בפתיחה, ואז תעבור לפוזיציות. שבר מניה בפקודת יום מבוטל אם לא בוצע עד סוף היום.</p>`;
+}
+
+function render(d){
+  const a = d.account || {}, t = d.totals || {};
+  $("acct").className = "pill " + (d.live ? "no" : "ok");
+  $("acct").textContent = d.live ? "חשבון אמיתי" : "חשבון נייר";
+  OPEN = d.market_open;
+  if (d.market_open === null) { $("mkt").className = "pill"; $("mkt").textContent = "מצב השוק לא ידוע"; }
+  else if (d.market_open) {
+    $("mkt").className = "pill ok";
+    $("mkt").textContent = "השוק פתוח" + (d.next_close ? ` · נסגר ב־${new Date(d.next_close).toLocaleTimeString("he-IL",{hour:"2-digit",minute:"2-digit"})}` : "");
+  } else {
+    $("mkt").className = "pill warn";
+    $("mkt").textContent = "השוק סגור" + (d.next_open ? ` · נפתח ${new Date(d.next_open).toLocaleString("he-IL",{weekday:"short",hour:"2-digit",minute:"2-digit"})}` : "");
+  }
+
+  const plPct = t.cost ? t.pl / t.cost : null;
+  $("tiles").innerHTML =
+    tile("שווי החשבון", usd(a.equity)) +
+    tile("שינוי היום", sgnUsd(a.day_pl), pct(a.day_pct, 2), dir(a.day_pl)) +
+    tile("שווי הפוזיציות", usd(t.value), `עלות ${usd(t.cost)}`) +
+    tile("רווח לא ממומש", sgnUsd(t.pl), pct(plPct), dir(t.pl)) +
+    tile("מזומן", usd(a.cash), `כוח קנייה ${usd(a.buying_power)}`);
+
+  const rows = d.rows || [];
+  $("c-pos").textContent = rows.length;
+  $("grid").innerHTML = rows.length ? rows.map(card).join("")
+    : `<div class="empty">אין פוזיציות פתוחות${(d.pending||[]).length ? " — הקנייה עוד ממתינה לביצוע, ראו למטה." : "."}</div>`;
+  LAST = Object.fromEntries(rows.map(r => [r.ticker, r.last]));
+  setTimeout(() => document.querySelectorAll(".price.fu,.price.fd").forEach(e => e.classList.remove("fu","fd")), 900);
+
+  $("c-pend").textContent = (d.pending || []).length;
+  $("pend").innerHTML = d.orders_ok === false
+    ? `<div class="err">לא הצלחתי למשוך את הפקודות הפתוחות מאלפקה.</div>` : pendingTable(d.pending || []);
+}
+
+async function load(manual){
+  if (BUSY) return;
+  BUSY = true;
+  try {
+    const r = await fetch("/api/live", {cache:"no-store"});
+    const d = await r.json().catch(() => ({error: `שגיאה ${r.status}`}));
+    if (!r.ok) throw new Error(d.error || `שגיאה ${r.status}`);
+    render(d); LAST_OK = Date.now(); $("err").innerHTML = "";
+  } catch (e) {
+    $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally { BUSY = false; tick(); schedule(); }
+}
+
+function schedule(){
+  clearTimeout(TIMER);
+  if (document.hidden) return;
+  TIMER = setTimeout(load, OPEN === false ? 60000 : 10000);
+}
+
+function tick(){
+  if (!LAST_OK) return;
+  const s = Math.round((Date.now() - LAST_OK) / 1000);
+  const limit = OPEN === false ? 150 : 40;
+  $("dot").className = "dot " + (s > limit ? "stale" : OPEN ? "on" : "");
+  $("age").textContent = s < 5 ? "עודכן עכשיו" : s < 60 ? `עודכן לפני ${s} שניות`
+    : `עודכן לפני ${Math.floor(s/60)} דק׳`;
+}
+
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); else clearTimeout(TIMER); });
+setInterval(tick, 1000);
+load();
+</script>
+</body>
+</html>
