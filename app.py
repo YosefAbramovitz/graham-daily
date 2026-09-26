@@ -33,6 +33,16 @@ TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. א
 לא צריך לחפש: שולחים לבוט הודעה אחת, והשרת מוצא אותו בהפעלה הבאה ושומר.
 
 אין הצפנה (http ולא https), ולכן זה מתאים לרשת הביתית ולא לרשת ציבורית.
+
+גישה מכל מקום, ב-HTTPS
+----------------------
+    python app.py --public
+
+בנוסף ל---lan: השרת מקבל גם כתובות מהאינטרנט (דרך הפניית פורטים בראוטר), אבל
+רק ב-HTTPS, ותמיד רק עם טוקן או ממכשיר מאושר. חמישה טוקנים שגויים מאותה כתובת
+חוסמים אותה לרבע שעה. התעודה מ-Let's Encrypt לשם שב-PUBLIC_HOST ב-.env
+(cert.py; צריך הפניה של פורט 80 בראוטר להנפקה ולחידוש). המחשב עצמו נכנס
+ב-http://127.0.0.1:5001, בלי תעודה. הקישור לטלגרם הוא https://<host>:5000/?t=...
 בהפעלה הראשונה ווינדוס עשוי לשאול אם לאפשר לפייתון גישה לרשת: לאשר לרשת
 פרטית בלבד.
 
@@ -95,8 +105,10 @@ TECH_CSV = ("https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/"
 
 app = Flask(__name__, static_folder=None)
 LIVE = False          # נדרס מ---live בשורת ההפעלה
-REMOTE = False        # נדרס מ---lan בשורת ההפעלה
+REMOTE = False        # נדרס מ---lan או --public בשורת ההפעלה
+PUBLIC = False        # --public: פתוח גם לאינטרנט, ב-HTTPS בלבד
 TOKEN = ""
+LOCAL_PORT = 5001     # במצב --public: HTTP רגיל למחשב עצמו בלבד
 COOKIE = "gd_token"
 
 # טווחי הכתובות של רשת פנימית (RFC 1918, ו-IPv6 מקומי)
@@ -211,9 +223,27 @@ def approve_device(resp):
     # Lax ולא Strict: הקישור נפתח מטלגרם (אתר אחר), ודפדפן לא שולח עוגייה
     # Strict בשרשרת ניווט שהתחילה מאתר אחר - גם לא אחרי ההפניה. פעולות
     # שמשנות משהו הן POST, ו-Lax לא שולח אותן מאתר אחר.
-    resp.set_cookie(DEVICE_COOKIE, did, max_age=DEVICE_MAX_AGE, httponly=True, samesite="Lax")
+    resp.set_cookie(DEVICE_COOKIE, did, max_age=DEVICE_MAX_AGE, httponly=True, samesite="Lax",
+                    secure=request.is_secure)
     resp.delete_cookie(COOKIE)
     return resp
+
+
+# חסימת ניחושים: 5 טוקנים שגויים מאותה כתובת ברבע שעה חוסמים אותה לרבע שעה.
+FAIL_WINDOW = 15 * 60
+FAIL_LIMIT = 5
+_failures: dict = {}
+
+
+def record_failure(ip: str) -> None:
+    _failures.setdefault(ip, []).append(time.time())
+
+
+def too_many_failures(ip: str) -> bool:
+    now = time.time()
+    recent = [t for t in _failures.get(ip, []) if now - t < FAIL_WINDOW]
+    _failures[ip] = recent
+    return len(recent) >= FAIL_LIMIT
 
 
 def current_device() -> Optional[str]:
@@ -230,15 +260,21 @@ def guard():
     who = request.remote_addr or ""
     if is_local(who):
         return None
-    if not is_lan(who):
+    if not is_lan(who) and not PUBLIC:
         return ("גישה רק מהמחשב עצמו או מהרשת הביתית.", 403,
                 {"Content-Type": "text/plain; charset=utf-8"})
+    if PUBLIC and not request.is_secure:
+        return ("רק דרך https.", 403, {"Content-Type": "text/plain; charset=utf-8"})
     given = request.args.get("t")
     if given is not None:
+        if too_many_failures(who):
+            return ("יותר מדי ניסיונות שגויים. נסה שוב בעוד רבע שעה.", 429,
+                    {"Content-Type": "text/plain; charset=utf-8"})
         if hmac.compare_digest(given, TOKEN):
             if current_device():
                 return redirect(request.path)
             return approve_device(redirect(request.path))
+        record_failure(who)
         return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
     did = current_device()
     if did:
@@ -1072,7 +1108,7 @@ def telegram_chat(bot: str) -> Optional[str]:
     return None
 
 
-def send_link_telegram(link: str) -> str:
+def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
     """שולח את קישור הכניסה לטלפון. מחזיר שורה להדפסה. לא זורק שגיאות."""
     load_env()
     bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -1082,7 +1118,7 @@ def send_link_telegram(link: str) -> str:
     chat = telegram_chat(bot)
     if not chat:
         return "טלגרם: לא מצאתי צ'אט. שלח לבוט הודעה כלשהי (למשל /start) והפעל מחדש."
-    text = ("מסך המסחר עלה. לפתוח בטלפון, על ה-Wi-Fi של הבית:\n" + link +
+    text = (f"מסך המסחר עלה. לפתוח בטלפון, {where}:\n" + link +
             "\n\nהקישור מאפשר לשלוח פקודות. אל תעביר אותו הלאה.")
     try:
         r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15,
@@ -1096,10 +1132,50 @@ def send_link_telegram(link: str) -> str:
 
 
 
+def start_public(port: int):
+    """--public: תעודה (מנפיק/מחדש לפי הצורך), HTTPS לכולם ו-HTTP מקומי למחשב."""
+    import ssl
+    import threading
+    from werkzeug.serving import make_server
+    import cert
+
+    host = os.environ.get("PUBLIC_HOST", "").strip()
+    if not host:
+        print("חסר PUBLIC_HOST ב-.env (למשל PUBLIC_HOST=graham-daily.myddns.me).")
+        sys.exit(1)
+    try:
+        changed, msg = cert.ensure(host)
+        print("תעודה: " + msg)
+    except Exception as exc:
+        print(f"תעודה: לא הצלחתי להנפיק או לחדש ({exc})")
+        if cert.days_left() is None:
+            sys.exit(1)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert.FULLCHAIN, cert.PRIVKEY)
+
+    def renew_daily():
+        while True:
+            time.sleep(24 * 3600)
+            try:
+                changed, msg = cert.ensure(host)
+                if changed:
+                    ctx.load_cert_chain(cert.FULLCHAIN, cert.PRIVKEY)   # בלי הפעלה מחדש
+                print("תעודה: " + msg)
+            except Exception as exc:
+                print(f"תעודה: החידוש נכשל ({exc})")
+    threading.Thread(target=renew_daily, daemon=True).start()
+
+    local = make_server("127.0.0.1", LOCAL_PORT, app, threaded=True)
+    threading.Thread(target=local.serve_forever, daemon=True).start()
+    return host, ctx
+
+
 def main() -> int:
-    global LIVE, REMOTE, TOKEN
+    global LIVE, REMOTE, PUBLIC, TOKEN
     LIVE = "--live" in sys.argv
-    REMOTE = "--lan" in sys.argv
+    PUBLIC = "--public" in sys.argv
+    REMOTE = PUBLIC or "--lan" in sys.argv
     port = 5000
     for i, a in enumerate(sys.argv):
         if a == "--port" and i + 1 < len(sys.argv):
@@ -1111,9 +1187,20 @@ def main() -> int:
     if LIVE:
         print("*** מצב חשבון אמיתי. כסף אמיתי. ***\n")
 
-    print(f"המסך רץ. פתח בדפדפן:  http://127.0.0.1:{port}")
+    ctx = None
     if REMOTE:
         TOKEN = ensure_token()
+    if PUBLIC:
+        load_env()
+        host, ctx = start_public(port)
+        print(f"המסך רץ. במחשב הזה:  http://127.0.0.1:{LOCAL_PORT}")
+        link = f"https://{host}:{port}/?t={TOKEN}"
+        print("\nגישה מבחוץ (HTTPS, טוקן או מכשיר מאושר). פתח פעם אחת בכל מכשיר:")
+        print(f"  {link}")
+        print("  " + send_link_telegram(link, "מכל מקום"))
+    else:
+        print(f"המסך רץ. פתח בדפדפן:  http://127.0.0.1:{port}")
+    if REMOTE and not PUBLIC:
         ip = lan_ip()
         print("\nגישה מהטלפון (רשת ביתית בלבד, הטלפון על אותו Wi-Fi). פתח פעם אחת בטלפון:")
         if ip:
@@ -1123,13 +1210,15 @@ def main() -> int:
         else:
             print(f"  http://<כתובת המחשב ברשת>:{port}/?t={TOKEN}")
             print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
+    if REMOTE:
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
     print("לעצירה: Ctrl+C\n")
-    # בלי --lan: ‏127.0.0.1 בלבד. עם --lan: כל הממשקים, אבל guard() דוחה כל
-    # כתובת שאינה המחשב עצמו או הרשת הפנימית, ודורש טוקן מהרשת.
-    app.run(host="0.0.0.0" if REMOTE else "127.0.0.1", port=port, debug=False)
+    # בלי --lan/--public: ‏127.0.0.1 בלבד. עם --lan: כל הממשקים, אבל guard() מקבל
+    # רק את המחשב והרשת הפנימית, ודורש טוקן או מכשיר מאושר מהרשת. עם --public:
+    # HTTPS לכל כתובת, ותמיד טוקן או מכשיר מאושר (חוץ מהמחשב עצמו).
+    app.run(host="0.0.0.0" if REMOTE else "127.0.0.1", port=port, debug=False,
+            ssl_context=ctx, threaded=True)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

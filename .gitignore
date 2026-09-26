@@ -17,3 +17,6 @@ app.log
 # מכשירים שאושרו לגישה מהרשת הביתית
 devices.json
 devices.tmp
+
+# תעודת SSL ומפתחות Let's Encrypt
+certs/
