@@ -40,8 +40,10 @@ TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. א
 
 בנוסף ל---lan: השרת מקבל גם כתובות מהאינטרנט (דרך הפניית פורטים בראוטר), אבל
 רק ב-HTTPS, ותמיד רק עם טוקן או ממכשיר מאושר. חמישה טוקנים שגויים מאותה כתובת
-חוסמים אותה לרבע שעה. התעודה מ-Let's Encrypt לשם שב-PUBLIC_HOST ב-.env
-(cert.py; צריך הפניה של פורט 80 בראוטר להנפקה ולחידוש). המחשב עצמו נכנס
+חוסמים אותה לרבע שעה. התעודה לשם שב-PUBLIC_HOST ב-.env (cert.py): כברירת מחדל
+מ-CA פרטי שמוגבל לשם הזה, ואותו מתקינים פעם אחת בטלפון (נשלח לטלגרם כשהוא
+נוצר, ונגיש ב-/ca.crt). CERT_MODE=letsencrypt ב-.env עובר ל-Let's Encrypt
+(צריך פורט 80 פתוח בראוטר). המחשב עצמו נכנס
 ב-http://127.0.0.1:5001, בלי תעודה. הקישור לטלגרם הוא https://<host>:5000/?t=...
 בהפעלה הראשונה ווינדוס עשוי לשאול אם לאפשר לפייתון גישה לרשת: לאשר לרשת
 פרטית בלבד.
@@ -263,6 +265,8 @@ def guard():
     if not is_lan(who) and not PUBLIC:
         return ("גישה רק מהמחשב עצמו או מהרשת הביתית.", 403,
                 {"Content-Type": "text/plain; charset=utf-8"})
+    if request.path == "/ca.crt":            # תעודת ה-CA הפרטי: ציבורית, בלי טוקן
+        return None
     if PUBLIC and not request.is_secure:
         return ("רק דרך https.", 403, {"Content-Type": "text/plain; charset=utf-8"})
     given = request.args.get("t")
@@ -296,6 +300,16 @@ def guard():
 def device_key(did: str) -> str:
     """מזהה קצר להצגה ולהסרה. המזהה עצמו משמש כסיסמה ולא יוצא מהשרת."""
     return hashlib.sha256(did.encode()).hexdigest()[:12]
+
+
+@app.get("/ca.crt")
+def ca_cert():
+    """תעודת ה-CA הפרטי, להתקנה בטלפון. מידע ציבורי - אין בה מפתח."""
+    import cert
+    if not cert.CA_EXPORT.exists():
+        return ("אין CA פרטי.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+    return send_from_directory(cert.CA_EXPORT.parent, cert.CA_EXPORT.name,
+                               mimetype="application/x-x509-ca-cert", as_attachment=True)
 
 
 @app.get("/api/devices")
@@ -1108,6 +1122,35 @@ def telegram_chat(bot: str) -> Optional[str]:
     return None
 
 
+CA_HOWTO = (
+    "זו תעודת ה-CA הפרטי של מסך המסחר. היא מוגבלת לחתום רק על {host}, ולכן לא "
+    "יכולה לשמש להתחזות לאתר אחר. מתקינים פעם אחת בכל מכשיר:\n\n"
+    "אייפון: לפתוח את הקובץ > הגדרות > פרופיל שהורד > התקנה. אחר כך: הגדרות > כללי > "
+    "אודות > הגדרות אמון בתעודות > להפעיל את graham-daily.\n\n"
+    "אנדרואיד: להוריד את הקובץ > הגדרות > אבטחה > הצפנה ופרטי כניסה > התקנת תעודה > "
+    "תעודת CA > לבחור את הקובץ.")
+
+
+def send_ca_telegram(host: str) -> str:
+    """שולח את קובץ ה-CA לטלגרם, עם הוראות התקנה."""
+    import cert
+    load_env()
+    bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = telegram_chat(bot) if bot else None
+    if not (bot and chat):
+        return "טלגרם: לא מוגדר, קובץ ה-CA לא נשלח (אפשר להוריד מ-/ca.crt)."
+    try:
+        with cert.CA_EXPORT.open("rb") as fh:
+            r = requests.post(f"https://api.telegram.org/bot{bot}/sendDocument", timeout=20,
+                              data={"chat_id": chat, "caption": CA_HOWTO.format(host=host)[:1000]},
+                              files={"document": ("graham-daily-ca.crt", fh,
+                                                  "application/x-x509-ca-cert")})
+        return ("טלגרם: קובץ ה-CA נשלח." if r.ok and r.json().get("ok")
+                else f"טלגרם: שליחת ה-CA נכשלה ({r.status_code}).")
+    except (requests.RequestException, ValueError, OSError) as exc:
+        return f"טלגרם: שליחת ה-CA נכשלה ({type(exc).__name__})."
+
+
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
     """שולח את קישור הכניסה לטלפון. מחזיר שורה להדפסה. לא זורק שגיאות."""
     load_env()
@@ -1143,9 +1186,13 @@ def start_public(port: int):
     if not host:
         print("חסר PUBLIC_HOST ב-.env (למשל PUBLIC_HOST=graham-daily.myddns.me).")
         sys.exit(1)
+    mode = os.environ.get("CERT_MODE", "private").strip() or "private"
+    had_ca = cert.CA_EXPORT.exists()
     try:
-        changed, msg = cert.ensure(host)
+        changed, msg = cert.ensure(host, mode=mode)
         print("תעודה: " + msg)
+        if mode == "private" and not had_ca and cert.CA_EXPORT.exists():
+            print("  " + send_ca_telegram(host))
     except Exception as exc:
         print(f"תעודה: לא הצלחתי להנפיק או לחדש ({exc})")
         if cert.days_left() is None:
@@ -1158,7 +1205,7 @@ def start_public(port: int):
         while True:
             time.sleep(24 * 3600)
             try:
-                changed, msg = cert.ensure(host)
+                changed, msg = cert.ensure(host, mode=mode)
                 if changed:
                     ctx.load_cert_chain(cert.FULLCHAIN, cert.PRIVKEY)   # בלי הפעלה מחדש
                 print("תעודה: " + msg)

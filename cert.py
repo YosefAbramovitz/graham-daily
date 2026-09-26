@@ -1,5 +1,13 @@
 """
-תעודת SSL מ-Let's Encrypt לשרת המסך, בלי certbot.
+תעודת SSL לשרת המסך. שני מצבים (CERT_MODE ב-.env):
+
+  private (ברירת המחדל) - CA פרטי שיוצרים כאן, מוגבל לחתום רק על השם של השרת
+      (Name Constraints), ותעודת שרת ממנו. מתקינים את ה-CA פעם אחת בכל טלפון
+      (certs/graham-ca.crt, נשלח גם לטלגרם ונגיש ב-/ca.crt), ואז אין אזהרות.
+      לא צריך פורט 80 ולא שירות חיצוני.
+  letsencrypt - תעודה מ-Let's Encrypt (למטה). צריך פורט 80 פתוח בראוטר.
+
+    python cert.py --host graham-daily.myddns.me --private   # CA פרטי
 
     python cert.py --host graham-daily.myddns.me            # להנפיק או לחדש לפי הצורך
     python cert.py --host graham-daily.myddns.me --staging  # ניסיון מול שרת הבדיקות
@@ -37,24 +45,28 @@ FULLCHAIN = CERT_DIR / "fullchain.pem"
 PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 RENEW_DAYS = 30
+CA_KEY = CERT_DIR / "ca.key"
+CA_CERT = CERT_DIR / "ca.pem"
+CA_EXPORT = CERT_DIR / "graham-ca.crt"      # DER, להתקנה בטלפון
+LEAF_DAYS = 800                              # iOS מקבל עד 825 יום מ-CA פרטי
 
 
-def days_left(path: Path = FULLCHAIN) -> Optional[int]:
+def days_left(path: Optional[Path] = None) -> Optional[int]:
     """כמה ימים נשארו לתעודה, או None אם אין תעודה קריאה."""
     try:
         from cryptography import x509
-        cert = x509.load_pem_x509_certificate(path.read_bytes())
+        cert = x509.load_pem_x509_certificate((path or FULLCHAIN).read_bytes())
     except (OSError, ValueError, ImportError):
         return None
     end = getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after.replace(tzinfo=timezone.utc)
     return (end - datetime.now(timezone.utc)).days
 
 
-def cert_host(path: Path = FULLCHAIN) -> Optional[str]:
+def cert_host(path: Optional[Path] = None) -> Optional[str]:
     try:
         from cryptography import x509
         from cryptography.x509.oid import NameOID
-        cert = x509.load_pem_x509_certificate(path.read_bytes())
+        cert = x509.load_pem_x509_certificate((path or FULLCHAIN).read_bytes())
         return cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
     except (OSError, ValueError, IndexError, ImportError):
         return None
@@ -157,12 +169,112 @@ def obtain(host: str, staging: bool = False, port: int = 80) -> str:
     return f"הונפקה תעודה ל-{host}{' (staging)' if staging else ''}, תקפה עוד {days_left()} ימים"
 
 
-def ensure(host: str, staging: bool = False, force: bool = False) -> Tuple[bool, str]:
-    """מנפיק רק אם אין תעודה, השם שונה, או שנשארו פחות מ-RENEW_DAYS ימים."""
+def _ec_key():
+    from cryptography.hazmat.primitives.asymmetric import ec
+    return ec.generate_private_key(ec.SECP256R1())
+
+
+def _key_pem(key) -> bytes:
+    from cryptography.hazmat.primitives import serialization
+    return key.private_bytes(serialization.Encoding.PEM,
+                             serialization.PrivateFormat.PKCS8,
+                             serialization.NoEncryption())
+
+
+def ensure_ca(host: str) -> bool:
+    """יוצר CA פרטי אם אין (או אם הוא לשם אחר). מחזיר True אם נוצר חדש."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509.oid import NameOID
+
+    if CA_KEY.exists() and CA_CERT.exists():
+        try:
+            ca = x509.load_pem_x509_certificate(CA_CERT.read_bytes())
+            nc = ca.extensions.get_extension_for_class(x509.NameConstraints).value
+            if any(n.value == host for n in (nc.permitted_subtrees or [])):
+                return False
+        except (ValueError, x509.ExtensionNotFound):
+            pass
+    CERT_DIR.mkdir(exist_ok=True)
+    key = _ec_key()
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, f"graham-daily private CA ({host})"),
+                      x509.NameAttribute(NameOID.ORGANIZATION_NAME, "graham-daily")])
+    now = datetime.now(timezone.utc)
+    ca = (x509.CertificateBuilder()
+          .subject_name(name).issuer_name(name).public_key(key.public_key())
+          .serial_number(x509.random_serial_number())
+          .not_valid_before(now - timedelta(minutes=5))
+          .not_valid_after(now + timedelta(days=3650))
+          .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+          .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=True, crl_sign=True,
+                                       content_commitment=False, key_encipherment=False,
+                                       data_encipherment=False, key_agreement=False,
+                                       encipher_only=False, decipher_only=False), critical=True)
+          # ה-CA יכול לחתום רק על השם של השרת. גם אם המפתח שלו ידלוף, אי אפשר
+          # להשתמש בו כדי להתחזות לאתר אחר בטלפון שהתקין אותו.
+          .add_extension(x509.NameConstraints(permitted_subtrees=[x509.DNSName(host)],
+                                              excluded_subtrees=None), critical=True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+          .sign(key, hashes.SHA256()))
+    _write(CA_KEY, _key_pem(key))
+    _write(CA_CERT, ca.public_bytes(serialization.Encoding.PEM))
+    _write(CA_EXPORT, ca.public_bytes(serialization.Encoding.DER))
+    return True
+
+
+def issue_private(host: str) -> str:
+    """תעודת שרת ל-host, חתומה ב-CA הפרטי."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+
+    ca_key = serialization.load_pem_private_key(CA_KEY.read_bytes(), None)
+    ca = x509.load_pem_x509_certificate(CA_CERT.read_bytes())
+    key = _ec_key()
+    now = datetime.now(timezone.utc)
+    leaf = (x509.CertificateBuilder()
+            .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)]))
+            .issuer_name(ca.subject).public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=5))
+            .not_valid_after(now + timedelta(days=LEAF_DAYS))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host)]), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(digital_signature=True, key_cert_sign=False, crl_sign=False,
+                                         content_commitment=False, key_encipherment=False,
+                                         data_encipherment=False, key_agreement=False,
+                                         encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()),
+                           critical=False)
+            .sign(ca_key, hashes.SHA256()))
+    _write(PRIVKEY, _key_pem(key))
+    _write(FULLCHAIN, leaf.public_bytes(serialization.Encoding.PEM) +
+           ca.public_bytes(serialization.Encoding.PEM))
+    return f"הונפקה תעודה פרטית ל-{host}, תקפה עוד {days_left()} ימים"
+
+
+def ensure(host: str, staging: bool = False, force: bool = False,
+           mode: str = "private") -> Tuple[bool, str]:
+    """מנפיק רק אם אין תעודה, השם שונה, ה-CA הוחלף, או שנשארו פחות מ-RENEW_DAYS ימים."""
+    new_ca = ensure_ca(host) if mode == "private" else False
     left = days_left()
-    if not force and left is not None and left >= RENEW_DAYS and cert_host() == host:
+    if (not force and not new_ca and left is not None and left >= RENEW_DAYS
+            and cert_host() == host and is_private() == (mode == "private")):
         return False, f"התעודה ל-{host} בתוקף עוד {left} ימים"
+    if mode == "private":
+        return True, issue_private(host) + (" (נוצר CA חדש: צריך להתקין אותו בטלפון)" if new_ca else "")
     return True, obtain(host, staging=staging)
+
+
+def is_private() -> bool:
+    """האם התעודה הנוכחית חתומה ב-CA הפרטי."""
+    try:
+        from cryptography import x509
+        leaf = x509.load_pem_x509_certificate(FULLCHAIN.read_bytes())
+        return CA_CERT.exists() and leaf.issuer == x509.load_pem_x509_certificate(CA_CERT.read_bytes()).subject
+    except (OSError, ValueError, ImportError):
+        return False
 
 
 def main() -> int:
@@ -171,12 +283,14 @@ def main() -> int:
     ap.add_argument("--staging", action="store_true")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--private", action="store_true", help="CA פרטי במקום Let's Encrypt")
     args = ap.parse_args()
     if args.status or not args.host:
         print(f"תעודה: {cert_host() or 'אין'}, ימים שנשארו: {days_left()}")
         return 0
     try:
-        changed, msg = ensure(args.host, staging=args.staging, force=args.force)
+        changed, msg = ensure(args.host, staging=args.staging, force=args.force,
+                              mode="private" if args.private else "letsencrypt")
     except Exception as exc:  # הודעה ברורה במקום traceback
         print(f"נכשל: {type(exc).__name__}: {exc}")
         return 1
