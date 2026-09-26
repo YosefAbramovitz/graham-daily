@@ -18,9 +18,9 @@ py -m pip install -r requirements.txt
 {
   "mcpServers": {
     "graham-daily": {
-      "command": "C:\\Python313\\python.exe",
+      "command": "C:\\Users\\yosefab\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
       "args": [
-        "C:\\Users\\yosefab\\OneDrive - Lapidot Group\\Documents\\Visual_Code\\graham-daily\\mcp_server.py"
+        "G:\\My Drive\\Claude\\Visual_Code\\graham-daily\\mcp_server.py"
       ]
     }
   }
