@@ -32,24 +32,30 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Is it 08:00 in Israel right now
+      # GitHub מתחיל ריצות מתוזמנות באיחור של עד כמה שעות, ולכן הבדיקה אינה
+      # "האם עכשיו 08:00" (אז כמעט כל ריצה מדלגת) אלא "האם כבר 08:00 או אחרי,
+      # והשלב עוד לא רץ היום". שני ה-cron מבטיחים ריצה אחת בבוקר, קיץ וחורף.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - name: Has today's run happened yet
         id: gate
-        run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import datetime, os
-          from zoneinfo import ZoneInfo
-          if os.environ.get("EVENT") != "schedule":
-              print("go=true")
-          else:
-              now = datetime.datetime.now(ZoneInfo("Asia/Jerusalem"))
-              print(f"go={'true' if now.hour == 8 else 'false'}")
-          PY
         env:
           EVENT: ${{ github.event_name }}
-
-      - name: Checkout
-        if: steps.gate.outputs.go == 'true'
-        uses: actions/checkout@v4
+        run: |
+          if [ "$EVENT" != "schedule" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          today=$(TZ=Asia/Jerusalem date +%F)
+          hour=$(TZ=Asia/Jerusalem date +%-H)
+          last=$(TZ=Asia/Jerusalem git log -1 --date=format-local:%F --format=%cd \
+                 --grep="Daily technical stage" -- docs/technical.html)
+          echo "Israel: $today ${hour}h, last technical commit: ${last:-none}"
+          if [ "$hour" -ge 8 ] && [ "$last" != "$today" ]; then
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Python
         if: steps.gate.outputs.go == 'true'
