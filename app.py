@@ -175,9 +175,12 @@ def guard():
     given = request.args.get("t")
     if given is not None:
         if hmac.compare_digest(given, TOKEN):
+            # Lax ולא Strict: הקישור נפתח מטלגרם (אתר אחר), ודפדפן לא שולח עוגייה
+            # Strict בשרשרת ניווט שהתחילה מאתר אחר - גם לא אחרי ההפניה. פעולות
+            # שמשנות משהו הן POST, ו-Lax לא שולח אותן מאתר אחר.
             resp = redirect(request.path)
             resp.set_cookie(COOKIE, TOKEN, max_age=30 * 24 * 3600,
-                            httponly=True, samesite="Strict")
+                            httponly=True, samesite="Lax")
             return resp
         return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
     if hmac.compare_digest(request.cookies.get(COOKIE, ""), TOKEN):
