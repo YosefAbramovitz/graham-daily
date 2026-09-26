@@ -145,7 +145,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
 
   <details class="win" id="w-watch" open>
     <summary><h2>מועמדות מהמסך</h2><span class="pill" id="c-watch">…</span>
-      <span class="sm">מי שעבר את גראהם ואת שלב האיכות</span></summary>
+      <span class="sm">מי שעבר את גראהם ואת שלב האיכות<span id="watch-asof"></span></span></summary>
     <div class="bulk" id="bulk" hidden>
       <b id="bulkn">0</b>
       <div class="fld"><label>קנייה לפי</label>
@@ -442,6 +442,8 @@ async function loadWatch(){
     const d = await jget("/api/watchlist");
     WATCH = d.rows || [];
     $("c-watch").textContent = WATCH.length;
+    $("watch-asof").textContent = d.as_of
+      ? ` · איתות מ־${new Date(d.as_of).toLocaleString("he-IL",{weekday:"short",day:"numeric",month:"numeric",hour:"2-digit",minute:"2-digit"})}` : "";
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
       return `<tr>
@@ -797,7 +799,10 @@ async function removeDevice(id, isMe){
 function refresh(){ loadStatus(); loadPositions(); loadOrders(); drawChart(); }
 refresh(); loadWatch(); loadDevices();
 setInterval(() => refresh(), 30000);
-setInterval(() => { if (MARKET_OPEN) loadWatch(); }, 120000);
+// מחיר: כל 2 דקות כשהשוק פתוח. הרשימה והאיתות מתחלפים פעם ביום (בבוקר, כשהשוק
+// סגור), ולכן גם כשהשוק סגור בודקים כל 10 דקות.
+let WATCH_TICK = 0;
+setInterval(() => { WATCH_TICK++; if (MARKET_OPEN || WATCH_TICK % 5 === 0) loadWatch(); }, 120000);
 </script>
 </body>
 </html>

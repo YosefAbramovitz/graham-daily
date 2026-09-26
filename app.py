@@ -412,38 +412,68 @@ def levels(entry: float, atr_pct: Optional[float]) -> dict:
             "deadline": deadline_for(date.today()).isoformat()}
 
 
-_watch: Optional[list] = None
+# הרשימה מהשלב הטכני. השלב רץ ב-GitHub פעם ביום (בבוקר), ולכן השרת בודק כל
+# WATCH_TTL שניות אם פורסמה רשימה חדשה - בבקשה מותנית (ETag), שכשאין שינוי
+# מחזירה 304 בלי תוכן. כך האיתות מתחלף בלי להפעיל את השרת מחדש.
+WATCH_TTL = 600
+TECH_COMMITS = ("https://api.github.com/repos/YosefAbramovitz/graham-daily/commits"
+                "?path=tech_results.csv&per_page=1")
+_watch = {"rows": [], "etag": None, "checked": 0.0, "as_of": None}
+
+
+def _parse_watch(text: str) -> list:
+    rows = []
+    for row in csv.DictReader(io.StringIO(text)):
+        def f(k):
+            v = (row.get(k) or "").strip()
+            try:
+                return float(v)
+            except ValueError:
+                return None
+        rows.append({
+            "ticker": (row.get("ticker") or "").strip().upper(),
+            "name": (row.get("name") or "").strip(),
+            "sector": (row.get("sector") or "").strip(),
+            "signal": (row.get("signal") or "").strip(),
+            "signal_kind": (row.get("signal_kind") or "").strip(),
+            "price": f("price"), "atr_pct": f("atr_pct"),
+            "rsi": f("rsi"), "quality_score": f("quality_score"),
+        })
+    return [r for r in rows if r["ticker"]]
+
+
+def _tech_date() -> Optional[str]:
+    """מתי השלב הטכני שמר את הרשימה האחרונה (זמן ה-commit שלה ב-GitHub)."""
+    try:
+        r = requests.get(TECH_COMMITS, timeout=10,
+                         headers={"Accept": "application/vnd.github+json"})
+        if r.ok and r.json():
+            return r.json()[0]["commit"]["committer"]["date"]
+    except (requests.RequestException, ValueError, KeyError, IndexError):
+        pass
+    return None
 
 
 def watchlist() -> list:
-    """המניות מהשלב הטכני, עם ה-ATR שלהן."""
-    global _watch
-    if _watch is not None:
-        return _watch
-    rows = []
+    """המניות מהשלב הטכני, עם ה-ATR שלהן. מתרענן לבד כשמתפרסמת רשימה חדשה."""
+    now = time.time()
+    if _watch["rows"] and now - _watch["checked"] < WATCH_TTL:
+        return _watch["rows"]
+    headers = {"If-None-Match": _watch["etag"]} if _watch["etag"] and _watch["rows"] else {}
     try:
-        r = requests.get(TECH_CSV, timeout=20)
+        r = requests.get(TECH_CSV, timeout=20, headers=headers)
         if r.status_code == 200:
-            for row in csv.DictReader(io.StringIO(r.text)):
-                def f(k):
-                    v = (row.get(k) or "").strip()
-                    try:
-                        return float(v)
-                    except ValueError:
-                        return None
-                rows.append({
-                    "ticker": (row.get("ticker") or "").strip().upper(),
-                    "name": (row.get("name") or "").strip(),
-                    "sector": (row.get("sector") or "").strip(),
-                    "signal": (row.get("signal") or "").strip(),
-                    "signal_kind": (row.get("signal_kind") or "").strip(),
-                    "price": f("price"), "atr_pct": f("atr_pct"),
-                    "rsi": f("rsi"), "quality_score": f("quality_score"),
-                })
+            rows = _parse_watch(r.text)
+            if rows:
+                changed = [x["ticker"] + x["signal"] for x in rows] != \
+                          [x["ticker"] + x["signal"] for x in _watch["rows"]]
+                _watch.update(rows=rows, etag=r.headers.get("ETag"))
+                if changed or not _watch["as_of"]:
+                    _watch["as_of"] = _tech_date() or _watch["as_of"]
+        _watch["checked"] = now          # 200 או 304: הבדיקה הבאה בעוד WATCH_TTL
     except requests.RequestException:
-        pass
-    _watch = [r for r in rows if r["ticker"]]
-    return _watch
+        _watch["checked"] = now - WATCH_TTL + 60   # תקלה: לנסות שוב בעוד דקה
+    return _watch["rows"]
 
 
 def entry_dates() -> dict:
@@ -612,7 +642,7 @@ def api_watchlist():
         r["last"] = quotes.get(r["ticker"]) or r["price"]
         if r["last"]:
             r["levels"] = levels(float(r["last"]), r["atr_pct"])
-    return jsonify({"rows": rows})
+    return jsonify({"rows": rows, "as_of": _watch["as_of"]})
 
 
 @app.get("/api/positions")
