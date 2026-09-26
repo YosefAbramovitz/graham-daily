@@ -10,3 +10,6 @@ __pycache__/
 
 # MCP local configuration
 claude_desktop_config.json
+
+# הפלט של המסך כשהוא רץ ברקע (מכיל את הקישור עם הטוקן)
+app.log
