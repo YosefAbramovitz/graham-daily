@@ -74,6 +74,10 @@ dialog#chart{max-width:820px; width:calc(100vw - 24px); padding:18px}
 .dlghead h3{margin:0; flex:1}
 .histbox{padding:2px 0}
 .histsvg{display:block; width:100%; height:auto}
+.seg{display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden}
+.seg button{font:inherit; font-size:13px; padding:5px 14px; border:none; background:var(--paper); color:var(--muted); cursor:pointer}
+.seg button+button{border-inline-start:1px solid var(--line)}
+.seg button.on{background:var(--accent); color:#fff; font-weight:600}
 .fld select{font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--line);
   background:var(--paper); color:var(--ink)}
 td.why{display:table-cell}
@@ -418,9 +422,9 @@ async function loadWatch(){
                    value="${r.last ? Number(r.last).toFixed(2) : ""}"
                    oninput="preview('${esc(r.ticker)}')"></div>
           <div class="fld"><label>קנייה לפי</label>
-            <select id="m-${esc(r.ticker)}" onchange="modeChange('${esc(r.ticker)}')">
-              <option value="qty">כמות מניות</option>
-              <option value="amount">סכום בדולרים</option></select></div>
+            <div class="seg" id="m-${esc(r.ticker)}" data-mode="qty">
+              <button type="button" class="on" data-v="qty" onclick="modeChange('${esc(r.ticker)}','qty')">מניות</button>
+              <button type="button" data-v="amount" onclick="modeChange('${esc(r.ticker)}','amount')">דולרים</button></div></div>
           <div class="fld"><label id="ql-${esc(r.ticker)}">כמות</label>
             <input id="q-${esc(r.ticker)}" type="number" step="1" min="1" value="1"
                    oninput="preview('${esc(r.ticker)}')"></div>
@@ -448,10 +452,14 @@ function togglePanel(t){
 
 const LV = {};
 function useStop(t){ const c = $("st-"+t); return !!(c && c.checked); }
-function modeOf(t){ const m = $("m-"+t); return m ? m.value : "qty"; }
+function modeOf(t){ const m = $("m-"+t); return m ? m.dataset.mode : "qty"; }
 
-function modeChange(t){
-  const amount = modeOf(t) === "amount", q = $("q-"+t);
+function modeChange(t, v){
+  const m = $("m-"+t);
+  if (!m || m.dataset.mode === v) return;
+  m.dataset.mode = v;
+  m.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
+  const amount = v === "amount", q = $("q-"+t);
   $("ql-"+t).textContent = amount ? "סכום ($)" : "כמות";
   q.step = amount ? "0.01" : "1";
   q.min = amount ? "1" : "1";
