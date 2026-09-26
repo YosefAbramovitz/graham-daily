@@ -44,6 +44,9 @@ tr:last-child td{border-bottom:none}
 .btn[disabled]{opacity:.35; cursor:not-allowed}
 .btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
 .btn.primary:hover{opacity:.9; color:#fff}
+.btn.primary.stop{background:var(--bad-ink); border-color:var(--bad-ink)}
+.btn.danger{color:var(--bad-ink); border-color:color-mix(in srgb,var(--bad-ink) 40%,var(--line))}
+.btn.danger:hover:not([disabled]){background:var(--bad-bg); color:var(--bad-ink); border-color:var(--bad-ink)}
 .panel td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
 .panelbox{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; padding:4px 0;
   /* נשאר בחלק הנראה של הכרטיס גם כשהטבלה נגללת לרוחב בטלפון */
@@ -122,11 +125,11 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
 
   <details class="win" id="w-ord" open>
     <summary><h2>פקודות</h2><span class="pill" id="c-ord">…</span>
-      <span class="sm">30 הימים האחרונים, כולל שבוצעו ושבוטלו</span></summary>
+      <span class="sm">30 הימים האחרונים, בלי פקודות שבוטלו</span></summary>
     <div class="card"><table>
       <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th>
-        <th>מהכניסה עד הסטופ</th></tr></thead>
-      <tbody id="ord"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+        <th>מהכניסה עד הסטופ</th><th></th></tr></thead>
+      <tbody id="ord"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
 
@@ -149,12 +152,12 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
 </div>
 
 <dialog id="dlg">
-  <h3>אישור פקודה</h3>
+  <h3 id="dlgtitle">אישור פקודה</h3>
   <div id="dlgbody"></div>
   <input id="dlgword" placeholder="הקלד BUY כדי לאשר" autocomplete="off">
   <div class="acts">
     <button class="btn primary" id="dlgsend">שלח</button>
-    <button class="btn" onclick="document.getElementById('dlg').close()">ביטול</button>
+    <button class="btn" onclick="document.getElementById('dlg').close()">סגור</button>
   </div>
 </dialog>
 
@@ -353,6 +356,7 @@ const ORDER_STATUS = {
   replaced: ["הוחלפה", ""], pending_cancel: ["בביטול", "warn"],
 };
 
+let ORDERS = {};
 async function loadOrders(){
   try {
     const d = await jget("/api/orders");
@@ -387,11 +391,13 @@ async function loadOrders(){
         <td class="num">${price}</td>
         <td><span class="pill ${cls}">${esc(label)}</span></td>
         <td class="num">${esc(when)}</td>
-        <td class="num">${toStop}</td></tr>`;
-    }).join("") : `<tr><td colspan="8" class="empty">אין פקודות ב-30 הימים האחרונים.</td></tr>`;
+        <td class="num">${toStop}</td>
+        <td>${r.cancelable ? `<button class="btn danger" onclick="askCancel('${esc(r.id)}')">בטל</button>` : ""}</td></tr>`;
+    }).join("") : `<tr><td colspan="9" class="empty">אין פקודות ב-30 הימים האחרונים.</td></tr>`;
+    ORDERS = Object.fromEntries(rows.map(r => [r.id, r]));
     $("c-ord").textContent = rows.length;
   } catch (e) {
-    $("ord").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
+    $("ord").innerHTML = `<tr><td colspan="9" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -514,12 +520,34 @@ async function preview(t){
 }
 
 let PENDING = null, MODE = "buy";
-function openDialog(html, word){
+function openDialog(html, word, sendLabel, title){
+  $("dlgtitle").textContent = title || "אישור פקודה";
   $("dlgbody").innerHTML = html;
   $("dlgword").value = "";
-  $("dlgword").placeholder = `הקלד ${word} כדי לאשר`;
+  // ביטול לא דורש הקלדת מילה: הוא לא מוציא כסף, ואפשר לשלוח שוב
+  $("dlgword").hidden = !word;
+  $("dlgword").placeholder = word ? `הקלד ${word} כדי לאשר` : "";
+  $("dlgsend").textContent = sendLabel || "שלח";
+  $("dlgsend").classList.toggle("stop", MODE === "cancel");
   $("dlg").showModal();
-  $("dlgword").focus();
+  (word ? $("dlgword") : $("dlgsend")).focus();
+}
+
+function askCancel(id){
+  const o = ORDERS[id];
+  if (!o) return;
+  MODE = "cancel";
+  PENDING = {id, ticker: o.ticker};
+  const legs = [o.leg_target ? `יעד ${f2(o.leg_target)}` : "", o.leg_stop ? `סטופ ${f2(o.leg_stop)}` : ""].filter(Boolean).join(" · ");
+  const warn = o.side === "sell"
+    ? "זו פקודת מכירה. אחרי הביטול הפוזיציה תישאר בלי פקודת יציאה עד שתחדש אותה."
+    : legs ? `יבוטלו גם הרגליים שמחוברות לקנייה (${legs}).` : "";
+  openDialog(`
+    <div class="row"><span>סימול</span><b>${esc(o.ticker)}</b></div>
+    <div class="row"><span>צד</span><b>${o.side === "buy" ? "קנייה" : "מכירה"}</b></div>
+    <div class="row"><span>כמות</span><b>${esc(o.qty ?? "")}</b></div>
+    <div class="row"><span>מחיר</span><b>${f2(o.limit_price || o.stop_price)}</b></div>
+    ${warn ? `<p class="sm" style="margin:10px 0 0">${esc(warn)}</p>` : ""}`, "", "בטל פקודה", "ביטול פקודה");
 }
 
 function askSend(t){
@@ -558,11 +586,16 @@ function askRenew(t){
 }
 
 $("dlgsend").addEventListener("click", async () => {
-  const word = MODE === "renew" ? "RENEW" : "BUY";
-  if ($("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
+  const word = MODE === "renew" ? "RENEW" : MODE === "cancel" ? "" : "BUY";
+  if (word && $("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    if (MODE === "renew") {
+    if (MODE === "cancel") {
+      await jpost("/api/cancel", {id: PENDING.id, confirm: "CANCEL"});
+      $("dlg").close();
+      $("err").innerHTML = `<div class="err" style="background:var(--good-bg);color:var(--good-ink)">` +
+        `${esc(PENDING.ticker)}: הפקודה בוטלה.</div>`;
+    } else if (MODE === "renew") {
       const stopBox = $("rn-stop");
       const r = await jpost("/api/renew",
         {ticker: PENDING.ticker, use_stop: !!(stopBox && stopBox.checked), confirm: "RENEW"});

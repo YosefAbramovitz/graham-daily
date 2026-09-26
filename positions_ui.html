@@ -88,6 +88,16 @@ tr:last-child td{border-bottom:none}
   border:1px dashed var(--line); border-radius:14px}
 .err{background:var(--bad-bg); color:var(--bad-ink); border-radius:10px; padding:10px 14px; font-size:13px; margin:10px 0}
 .sm{font-size:11px; color:var(--muted)}
+.btn.danger{color:var(--bad-ink); border-color:color-mix(in srgb,var(--bad-ink) 40%,var(--line))}
+.btn.danger:hover{background:var(--bad-bg); color:var(--bad-ink); border-color:var(--bad-ink)}
+.btn.primary{background:var(--bad-ink); color:#fff; border-color:var(--bad-ink)}
+.btn.primary:hover{opacity:.9; color:#fff}
+dialog{border:1px solid var(--line); border-radius:14px; background:var(--paper); color:var(--ink);
+  padding:22px; width:min(420px, calc(100vw - 32px)); box-shadow:0 10px 40px rgba(0,0,0,.25)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h3{margin:0 0 10px; font-size:17px}
+dialog .row{display:flex; justify-content:space-between; font-size:14px; padding:4px 0; border-bottom:1px solid var(--line)}
+dialog .acts{display:flex; gap:8px; margin-top:14px}
 footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:28px}
 @media (max-width:420px){ .grid{grid-template-columns:1fr} .price{font-size:23px} }
 </style>
@@ -112,6 +122,15 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:28px}
 
   <h2>קניות שנשלחו ועוד לא בוצעו <span class="pill" id="c-pend">…</span></h2>
   <div id="pend"></div>
+
+  <dialog id="dlg">
+    <h3>ביטול פקודה</h3>
+    <div id="dlgbody"></div>
+    <div class="acts">
+      <button class="btn primary" id="dlgsend" onclick="doCancel()">בטל פקודה</button>
+      <button class="btn" onclick="document.getElementById('dlg').close()">סגור</button>
+    </div>
+  </dialog>
 
   <footer>
     המחירים מהעסקה האחרונה אצל אלפקה. המסך מתרענן כל 10 שניות כשהשוק פתוח ופעם בדקה כשהוא סגור,
@@ -197,7 +216,7 @@ const ORDER_STATUS = {new:"ממתינה", accepted:"ממתינה", pending_new:"
 function pendingTable(rows){
   if (!rows.length) return `<div class="empty">אין קניות פתוחות. כל מה שנשלח כבר בוצע, בוטל או פקע.</div>`;
   return `<div class="card"><table><thead><tr><th>סימול</th><th>מצב</th><th>כמות</th><th>בוצע</th>
-      <th>מחיר לימיט</th><th>יעד</th><th>סטופ</th><th>תוקף</th><th>נשלחה</th></tr></thead><tbody>
+      <th>מחיר לימיט</th><th>יעד</th><th>סטופ</th><th>תוקף</th><th>נשלחה</th><th></th></tr></thead><tbody>
     ${rows.map(o => `<tr><td><b>${esc(o.ticker)}</b></td>
       <td><span class="pill ${o.status === "partially_filled" ? "ok" : "warn"}">${esc(ORDER_STATUS[o.status] || o.status)}</span></td>
       <td class="num">${o.qty != null ? fmtQty(o.qty) : usd(+o.notional)}</td>
@@ -206,9 +225,37 @@ function pendingTable(rows){
       <td class="num">${o.target ? usd(o.target) : "—"}</td>
       <td class="num">${o.stop ? usd(o.stop) : "—"}</td>
       <td>${o.tif === "day" ? "יום" : o.tif === "gtc" ? "GTC" : esc(o.tif || "")}</td>
-      <td class="num sm">${o.submitted_at ? new Date(o.submitted_at).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : ""}</td></tr>`).join("")}
+      <td class="num sm">${o.submitted_at ? new Date(o.submitted_at).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : ""}</td>
+      <td><button class="btn danger" onclick="askCancel('${esc(o.id)}')">בטל</button></td></tr>`).join("")}
     </tbody></table></div>
     <p class="sm">קנייה שנשלחה כשהשוק סגור תתבצע בפתיחה, ואז תעבור לפוזיציות. שבר מניה בפקודת יום מבוטל אם לא בוצע עד סוף היום.</p>`;
+}
+
+let PEND = {}, CANCEL_ID = null;
+function askCancel(id){
+  const o = PEND[id]; if (!o) return;
+  CANCEL_ID = id;
+  const legs = [o.target ? `יעד ${usd(o.target)}` : "", o.stop ? `סטופ ${usd(o.stop)}` : ""].filter(Boolean).join(" · ");
+  $("dlgbody").innerHTML = `
+    <div class="row"><span>סימול</span><b>${esc(o.ticker)}</b></div>
+    <div class="row"><span>כמות</span>${n(o.qty != null ? fmtQty(o.qty) : usd(+o.notional))}</div>
+    <div class="row"><span>מחיר לימיט</span>${n(o.limit_price ? usd(+o.limit_price) : "שוק")}</div>
+    ${legs ? `<p class="sm" style="margin:10px 0 0">יבוטלו גם הרגליים שמחוברות לקנייה (${esc(legs)}).</p>` : ""}`;
+  $("dlg").showModal();
+}
+async function doCancel(){
+  const btn = $("dlgsend"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/cancel", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({id: CANCEL_ID, confirm: "CANCEL"})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || `שגיאה ${r.status}`);
+    $("dlg").close();
+    load(true);
+  } catch (e) {
+    $("dlg").close();
+    $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally { btn.disabled = false; }
 }
 
 function render(d){
@@ -240,6 +287,7 @@ function render(d){
   LAST = Object.fromEntries(rows.map(r => [r.ticker, r.last]));
   setTimeout(() => document.querySelectorAll(".price.fu,.price.fd").forEach(e => e.classList.remove("fu","fd")), 900);
 
+  PEND = Object.fromEntries((d.pending || []).map(o => [o.id, o]));
   $("c-pend").textContent = (d.pending || []).length;
   $("pend").innerHTML = d.orders_ok === false
     ? `<div class="err">לא הצלחתי למשוך את הפקודות הפתוחות מאלפקה.</div>` : pendingTable(d.pending || []);

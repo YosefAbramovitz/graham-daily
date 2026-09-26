@@ -50,6 +50,7 @@ import io
 import ipaddress
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -510,6 +511,8 @@ def api_orders():
         return jsonify(data), 502
     ok_p, pos = api("GET", f"{base()}/v2/positions")
     held = {p.get("symbol") for p in pos} if ok_p and isinstance(pos, list) else set()
+    # פקודות שבוטלו (כולל אלה שהוחלפו בחידוש) הן רעש: לא קרה בהן כלום.
+    data = [o for o in data if o.get("status") != "canceled"]
     return jsonify({"rows": [{
         "leg_target": leg_levels(o)[0], "leg_stop": leg_levels(o)[1],
         "id": o.get("id"), "ticker": o.get("symbol"), "side": o.get("side"),
@@ -519,7 +522,35 @@ def api_orders():
         "status": o.get("status"), "class": o.get("order_class"),
         "submitted_at": o.get("submitted_at"), "filled_at": o.get("filled_at"),
         "held": o.get("symbol") in held,
+        "cancelable": o.get("status") in OPEN_STATUSES,
     } for o in data]})
+
+
+# סטטוסים של פקודה שעוד אפשר לבטל אצל אלפקה
+OPEN_STATUSES = {"new", "accepted", "pending_new", "partially_filled", "held",
+                 "accepted_for_bidding", "calculated", "pending_replace"}
+ORDER_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
+
+
+@app.post("/api/cancel")
+def api_cancel():
+    """ביטול פקודה פתוחה אחת. ברגליים של OTO/bracket אלפקה מבטלת גם את היעד והסטופ."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "CANCEL":
+        return jsonify({"error": "חסר אישור"}), 400
+    oid = str(body.get("id") or "")
+    if not ORDER_ID.match(oid):
+        return jsonify({"error": "מזהה פקודה לא תקין"}), 400
+    ok, o = api("GET", f"{base()}/v2/orders/{oid}")
+    if not ok:
+        return jsonify(o), 502
+    if o.get("status") not in OPEN_STATUSES:
+        return jsonify({"error": f"הפקודה כבר במצב {o.get('status')} ואי אפשר לבטל אותה"}), 409
+    ok, err = api("DELETE", f"{base()}/v2/orders/{oid}")
+    if not ok:
+        return jsonify(err), 502
+    return jsonify({"id": oid, "ticker": o.get("symbol"), "side": o.get("side"),
+                    "status": "pending_cancel"})
 
 
 @app.get("/api/history/<sym>")
