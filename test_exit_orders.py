@@ -77,6 +77,31 @@ def test_other_symbols_are_ignored():
     assert eo.exit_state(orders, "KO", TODAY)["state"] == "none"
 
 
+def test_amount_splits_into_whole_shares_and_a_fraction():
+    assert eo.split_amount(1000, 182.40) == (5, 0.482456)
+
+
+def test_a_fraction_under_one_dollar_is_dropped():
+    assert eo.split_amount(365.0, 182.40) == (2, 0.0)
+
+
+def test_amount_below_one_share_is_only_a_fraction():
+    whole, frac = eo.split_amount(100, 182.40)
+    assert whole == 0 and abs(frac - 0.548246) < 1e-6
+
+
+def test_fraction_order_is_a_day_limit_without_exit_legs():
+    b = eo.fraction_order_body("LULU", 0.482456, 182.4)
+    assert b["time_in_force"] == "day" and b["type"] == "limit"
+    assert b["qty"] == "0.482456" and "order_class" not in b and "take_profit" not in b
+
+
+def test_whole_shares_floors_fractional_positions():
+    assert eo.whole_shares("5.482456") == 5
+    assert eo.whole_shares("0.5") == 0
+    assert eo.whole_shares(None) == 0
+
+
 if __name__ == "__main__":
     import sys
     failures = 0

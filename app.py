@@ -62,7 +62,8 @@ import requests
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
-                         exit_state, flatten_orders)
+                         exit_state, flatten_orders, fraction_order_body,
+                         split_amount, whole_shares)
 
 HERE = Path(__file__).parent
 PAPER_BASE = "https://paper-api.alpaca.markets"
@@ -604,15 +605,24 @@ def api_preview():
 
 @app.post("/api/order")
 def api_order():
-    """שולח bracket. דורש confirm מפורש מהדפדפן - הכפתור לבדו לא מספיק."""
+    """שולח את הקנייה. דורש confirm מפורש מהדפדפן - הכפתור לבדו לא מספיק.
+
+    לפי כמות: מניות שלמות, OTO או bracket כרגיל. לפי סכום: המניות השלמות
+    בפקודה הרגילה, והשבר שנשאר בפקודת יום נפרדת בלי יעד, כי אלפקה לא מקבלת
+    שבר מניה ב-GTC או בפקודה מרובת רגליים.
+    """
     body = request.get_json(silent=True) or {}
     if body.get("confirm") != "BUY":
         return jsonify({"error": "חסר אישור"}), 400
     sym = str(body.get("ticker") or "").strip().upper()
     try:
-        qty = int(body.get("qty"))
         entry = float(body.get("entry"))
         target = float(body.get("target"))
+        if body.get("mode") == "amount":
+            amount = float(body.get("amount"))
+            qty, frac = split_amount(amount, entry)
+        else:
+            amount, qty, frac = None, int(body.get("qty")), 0.0
     except (TypeError, ValueError):
         return jsonify({"error": "שדות חסרים או לא תקינים"}), 400
     use_stop = bool(body.get("use_stop"))
@@ -622,8 +632,9 @@ def api_order():
             stop = float(body.get("stop"))
         except (TypeError, ValueError):
             return jsonify({"error": "סטופ חסר או לא תקין"}), 400
-    if not sym or qty <= 0 or entry <= 0:
-        return jsonify({"error": "סימול, כמות ומחיר חייבים להיות תקינים"}), 400
+    if not sym or entry <= 0 or (qty <= 0 and frac <= 0):
+        return jsonify({"error": "סימול, כמות או סכום, ומחיר חייבים להיות תקינים"
+                        + (" (הסכום קטן מדולר אחד של מניה)" if amount else "")}), 400
     if not entry < target:
         return jsonify({"error": "היעד חייב להיות מעל מחיר הכניסה"}), 400
     if use_stop and not stop < entry:
@@ -643,15 +654,28 @@ def api_order():
             return jsonify({"error": (
                 f"הסטופ {stop:.2f} לא מתחת למחיר בשוק ({market:.2f}); הוא היה מופעל מיד.")}), 400
 
-    ok, data = api("POST", f"{base()}/v2/orders",
-                   data=json.dumps(entry_order_body(sym, qty, entry, target, stop)))
-    if not ok:
-        return jsonify(data), 502
-    return jsonify({
-        "id": data.get("id"), "status": data.get("status"),
-        "csv_row": f"{sym},{date.today().isoformat()},{entry:.2f},{qty},",
-    })
-
+    out = {"qty": qty, "fraction": frac}
+    if qty > 0:
+        ok, data = api("POST", f"{base()}/v2/orders",
+                       data=json.dumps(entry_order_body(sym, qty, entry, target, stop)))
+        if not ok:
+            return jsonify(data), 502
+        out.update({"id": data.get("id"), "status": data.get("status")})
+    if frac > 0:
+        ok, data = api("POST", f"{base()}/v2/orders",
+                       data=json.dumps(fraction_order_body(sym, frac, entry)))
+        if not ok:
+            msg = str(data.get("error", ""))
+            if qty > 0:
+                # המניות השלמות כבר נשלחו; לא מסתירים את זה בגלל השבר
+                out["fraction_error"] = msg
+            else:
+                return jsonify(data), 502
+        else:
+            out.update({"fraction_id": data.get("id"), "fraction_status": data.get("status")})
+    total = qty + frac
+    out["csv_row"] = f"{sym},{date.today().isoformat()},{entry:.2f},{total:g},"
+    return jsonify(out)
 
 
 @app.post("/api/renew")
@@ -668,11 +692,15 @@ def api_renew():
     ok, pos = api("GET", f"{base()}/v2/positions/{sym}")
     if not ok:
         return jsonify(pos), 502
-    qty = pos.get("qty")
+    # פקודת GTC לא מקבלת שבר מניה; מחדשים רק את המניות השלמות.
+    qty = whole_shares(pos.get("qty"))
     avg = float(pos.get("avg_entry_price") or 0)
     cur = float(pos.get("current_price") or 0)
-    if not qty or avg <= 0:
+    if avg <= 0:
         return jsonify({"error": "לא הצלחתי לקרוא כמות ומחיר כניסה"}), 502
+    if qty < 1:
+        return jsonify({"error": ("בפוזיציה יש רק שבר מניה. אלפקה לא מקבלת שבר בפקודת GTC, "
+                                  "ולכן אין לו פקודת יציאה; מכירה תהיה ידנית.")}), 400
     atr = next((w.get("atr_pct") for w in watchlist() if w.get("ticker") == sym), None)
     L = levels(avg, atr)
     target = L["target"]

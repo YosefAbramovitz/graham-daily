@@ -45,7 +45,9 @@ tr:last-child td{border-bottom:none}
 .btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
 .btn.primary:hover{opacity:.9; color:#fff}
 .panel td{background:color-mix(in srgb,var(--accent) 5%,transparent)}
-.panelbox{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; padding:4px 0}
+.panelbox{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; padding:4px 0;
+  /* נשאר בחלק הנראה של הכרטיס גם כשהטבלה נגללת לרוחב בטלפון */
+  position:sticky; right:12px; width:min(1120px, calc(100vw - 58px))}
 .fld{display:flex; flex-direction:column; gap:3px}
 .fld label{font-size:11px; color:var(--muted)}
 .fld input{font:inherit; width:108px; padding:5px 8px; border-radius:8px; border:1px solid var(--line);
@@ -55,10 +57,25 @@ tr:last-child td{border-bottom:none}
 .lv.tp b{color:var(--good-ink)} .lv.sl b{color:var(--bad-ink)}
 a.tk{color:inherit; text-decoration:none; border-bottom:1px dotted var(--muted)}
 a.tk:hover{color:var(--accent); border-color:var(--accent)}
-.hist td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
-/* הגרף נשאר בתוך החלק הנראה של הכרטיס גם כשהטבלה נגללת לרוחב בטלפון */
-.histbox{padding:6px 0 2px; position:sticky; right:12px; width:min(760px, calc(100vw - 58px))}
+/* כל אזור הוא חלון שנפתח ונסגר בלחיצה על הכותרת */
+details.win{margin-top:18px}
+details.win>summary{list-style:none; cursor:pointer; display:flex; align-items:center; gap:10px;
+  background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:12px 16px;
+  box-shadow:var(--shadow); user-select:none}
+details.win>summary::-webkit-details-marker{display:none}
+details.win>summary h2{margin:0; font-size:17px}
+details.win>summary .sm{display:inline}
+details.win>summary::after{content:"▾"; margin-inline-start:auto; color:var(--muted); transition:transform .15s}
+details.win:not([open])>summary::after{transform:rotate(90deg)}
+details.win[open]>summary{border-radius:14px 14px 0 0; box-shadow:none}
+details.win>.card{border-top:none; border-radius:0 0 14px 14px}
+dialog#chart{max-width:820px; width:calc(100vw - 24px); padding:18px}
+.dlghead{display:flex; align-items:center; gap:10px; margin-bottom:6px}
+.dlghead h3{margin:0; flex:1}
+.histbox{padding:2px 0}
 .histsvg{display:block; width:100%; height:auto}
+.fld select{font:inherit; padding:5px 8px; border-radius:8px; border:1px solid var(--line);
+  background:var(--paper); color:var(--ink)}
 td.why{display:table-cell}
 @media (max-width:700px){ th.why, td.why{display:none} }
 .histsvg text{font-size:11px; fill:var(--muted); font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
@@ -89,24 +106,33 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
   <div class="bar" id="bar"><span class="pill">טוען…</span></div>
   <div id="err"></div>
 
-  <h2>פוזיציות פתוחות</h2>
-  <div class="card"><table>
-    <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
-      <th>מה לעשות</th><th class="why">למה</th><th>פקודת יציאה</th><th>מאז הקנייה</th></tr></thead>
-    <tbody id="pos"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
-  </table></div>
+  <details class="win" id="w-pos" open>
+    <summary><h2>פוזיציות פתוחות</h2><span class="pill" id="c-pos">…</span></summary>
+    <div class="card"><table>
+      <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
+        <th>מה לעשות</th><th class="why">למה</th><th>פקודת יציאה</th><th>מאז הקנייה</th></tr></thead>
+      <tbody id="pos"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+  </details>
 
-  <h2>פקודות <span class="sm" style="display:inline">30 הימים האחרונים, כולל שבוצעו ושבוטלו</span></h2>
-  <div class="card"><table>
-    <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th><th></th></tr></thead>
-    <tbody id="ord"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
-  </table></div>
+  <details class="win" id="w-ord" open>
+    <summary><h2>פקודות</h2><span class="pill" id="c-ord">…</span>
+      <span class="sm">30 הימים האחרונים, כולל שבוצעו ושבוטלו</span></summary>
+    <div class="card"><table>
+      <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th>
+        <th>מהכניסה עד הסטופ</th></tr></thead>
+      <tbody id="ord"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+  </details>
 
-  <h2>מועמדות מהמסך <span class="sm" style="display:inline">מי שעבר את גראהם ואת שלב האיכות</span></h2>
-  <div class="card"><table>
-    <thead><tr><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
-    <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
-  </table></div>
+  <details class="win" id="w-watch" open>
+    <summary><h2>מועמדות מהמסך</h2><span class="pill" id="c-watch">…</span>
+      <span class="sm">מי שעבר את גראהם ואת שלב האיכות</span></summary>
+    <div class="card"><table>
+      <thead><tr><th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
+      <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+  </details>
 
   <footer>
     הכניסה נשלחת עם יעד מכירה של +50%. סטופ נוסף רק אם סימנת אותו, כי אצל גראהם ירידת מחיר
@@ -127,6 +153,12 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
   </div>
 </dialog>
 
+<dialog id="chart">
+  <div class="dlghead"><h3 id="charttitle"></h3>
+    <button class="btn" onclick="closeChart()">סגור</button></div>
+  <div class="histbox" id="chartbox"></div>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
@@ -136,8 +168,8 @@ let MARKET_OPEN = false, WATCH = [];
 
 function showErr(msg){ $("err").innerHTML = msg ? `<div class="err">${esc(msg)}</div>` : ""; }
 
-// מפתח לכל גרף: P+סימול לפוזיציה פתוחה, O+מזהה לפקודת קנייה שבוצעה
-const OPEN_HIST = new Set(), HIST_HTML = {}, HIST_URL = {};
+const pct = v => (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
+let CHART = null;   // הגרף שפתוח עכשיו בחלון, אם יש
 
 function histSvg(h, W){
   const pts = (h.points || []).filter(p => Number.isFinite(p[1]));
@@ -183,7 +215,6 @@ function histSvg(h, W){
 }
 
 function histFacts(h){
-  const pct = v => (v >= 0 ? "+" : "") + (v * 100).toFixed(1) + "%";
   const today = new Date(); today.setHours(0,0,0,0);
   const days = s => Math.round((new Date(s + "T00:00:00") - today) / 86400000);
   const bits = [];
@@ -208,37 +239,36 @@ function histFacts(h){
       <span>● יום הקנייה</span>${sold ? "<span>○ יום המכירה</span>" : ""}</div>`;
 }
 
-async function toggleHist(key, url){
-  const row = $("h-" + key);
-  if (!row) return;
-  HIST_URL[key] = url;
-  if (!row.hidden) { row.hidden = true; OPEN_HIST.delete(key); return; }
-  row.hidden = false; OPEN_HIST.add(key);
-  await drawHist(key);
+async function openChart(ticker){
+  CHART = {ticker, url: "/api/history/" + encodeURIComponent(ticker)};
+  $("charttitle").textContent = `${ticker} מאז הקנייה`;
+  $("chartbox").innerHTML = `<p class="sm">טוען…</p>`;
+  $("chart").showModal();
+  await drawChart();
 }
 
-async function drawHist(key){
-  const box = $("hb-" + key);
-  if (!box || !HIST_URL[key]) return;
-  if (!HIST_HTML[key]) box.innerHTML = `<p class="sm">טוען…</p>`;
+async function drawChart(){
+  if (!CHART || !$("chart").open) return;
+  const box = $("chartbox"), url = CHART.url;
   try {
-    const h = await jget(HIST_URL[key]);
+    const h = await jget(url);
+    if (!CHART || CHART.url !== url) return;
     // רוחב אמיתי במקום קנה מידה, כדי שהטקסט בגרף יישאר קריא גם בטלפון
-    const W = Math.round(Math.max(300, Math.min(760, box.clientWidth || 640)));
-    HIST_HTML[key] = histSvg(h, W) + histFacts(h);
-  } catch (e) { HIST_HTML[key] = HIST_HTML[key] || `<p class="sm">${esc(e.message)}</p>`; }
-  const cur = $("hb-" + key);
-  if (cur) cur.innerHTML = HIST_HTML[key];
+    const W = Math.round(Math.max(280, Math.min(780, box.clientWidth || 640)));
+    box.innerHTML = histSvg(h, W) + histFacts(h);
+  } catch (e) { box.innerHTML = `<p class="sm">${esc(e.message)}</p>`; }
 }
 
-// שורת הגרף מתחת לשורה בטבלה; נשארת פתוחה גם אחרי רענון
-function histRow(key, cols){
-  const open = OPEN_HIST.has(key);
-  return `<tr class="hist" id="h-${key}" ${open ? "" : "hidden"}>
-    <td colspan="${cols}"><div class="histbox" id="hb-${key}">${open ? (HIST_HTML[key] || "") : ""}</div></td></tr>`;
-}
-function redrawOpen(keys){ keys.forEach(k => { if (OPEN_HIST.has(k)) drawHist(k); }); }
-const keyFor = s => String(s).replace(/[^A-Za-z0-9_-]/g, "_");
+function closeChart(){ $("chart").close(); CHART = null; }
+$("chart").addEventListener("close", () => { CHART = null; });
+
+// מצב פתוח/סגור של כל חלון נשמר בדפדפן הזה
+document.querySelectorAll("details.win").forEach(d => {
+  try { const v = localStorage.getItem("win:" + d.id); if (v !== null) d.open = v === "1"; } catch (e) {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem("win:" + d.id, d.open ? "1" : "0"); } catch (e) {}
+  });
+});
 
 async function jget(url){
   const r = await fetch(url);
@@ -290,11 +320,9 @@ async function loadPositions(){
         <td><span class="pill ${cls}">${esc(r.action)}</span></td>
         <td class="sm why">${esc(r.why)}</td>
         ${exitCell(r)}
-        <td><button class="btn" onclick="toggleHist('P${keyFor(r.ticker)}',
-            '/api/history/${encodeURIComponent(r.ticker)}')">גרף</button></td></tr>
-      ${histRow("P" + keyFor(r.ticker), 9)}`;
+        <td><button class="btn" onclick="openChart('${esc(r.ticker)}')">גרף</button></td></tr>`;
     }).join("") : `<tr><td colspan="9" class="empty">אין פוזיציות פתוחות.</td></tr>`;
-    redrawOpen(rows.map(r => "P" + keyFor(r.ticker)));
+    $("c-pos").textContent = rows.length;
   } catch (e) {
     $("pos").innerHTML = `<tr><td colspan="9" class="empty">${esc(e.message)}</td></tr>`;
   }
@@ -331,10 +359,18 @@ async function loadOrders(){
         : f2(r.limit_price || r.stop_price);
       const when = String(r.filled_at || r.submitted_at || "").slice(0, 10);
       const qty = r.status === "partially_filled" ? `${esc(r.filled_qty)}/${esc(r.qty)}` : esc(r.qty);
-      const key = "O" + keyFor(r.id);
-      const link = (r.side === "buy" && String(r.status).includes("filled"))
-        ? `<button class="btn" onclick="toggleHist('${key}',
-            '/api/history/${encodeURIComponent(r.ticker)}?order=${encodeURIComponent(r.id)}')">גרף</button>` : "";
+      // כמה אחוזים מנקודת הקנייה עד הסטופ: המחיר שבוצע, או ה-limit אם עוד ממתינה
+      const base = Number(r.filled_avg_price || r.limit_price);
+      let toStop = "";
+      if (r.side === "buy") {
+        if (!r.leg_stop) toStop = `<span class="sm">ללא סטופ</span>`;
+        else if (base) {
+          const v = r.leg_stop / base - 1;
+          toStop = v < 0
+            ? `<span class="down">${pct(v)}</span><span class="sm">סטופ ${f2(r.leg_stop)}</span>`
+            : `<span class="pill no">${pct(v)}</span><span class="sm">הסטופ ${f2(r.leg_stop)} מעל הכניסה</span>`;
+        }
+      }
       const legs = [r.leg_target ? `יעד ${f2(r.leg_target)}` : "", r.leg_stop ? `סטופ ${f2(r.leg_stop)}` : ""]
         .filter(Boolean).join(" · ");
       return `<tr>
@@ -346,10 +382,9 @@ async function loadOrders(){
         <td class="num">${price}</td>
         <td><span class="pill ${cls}">${esc(label)}</span></td>
         <td class="num">${esc(when)}</td>
-        <td>${link}</td></tr>
-      ${link ? histRow(key, 8) : ""}`;
+        <td class="num">${toStop}</td></tr>`;
     }).join("") : `<tr><td colspan="8" class="empty">אין פקודות ב-30 הימים האחרונים.</td></tr>`;
-    redrawOpen(rows.map(r => "O" + keyFor(r.id)));
+    $("c-ord").textContent = rows.length;
   } catch (e) {
     $("ord").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
@@ -359,6 +394,7 @@ async function loadWatch(){
   try {
     const d = await jget("/api/watchlist");
     WATCH = d.rows || [];
+    $("c-watch").textContent = WATCH.length;
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
       return `<tr>
@@ -380,7 +416,11 @@ async function loadWatch(){
             <input id="e-${esc(r.ticker)}" type="number" step="0.01"
                    value="${r.last ? Number(r.last).toFixed(2) : ""}"
                    oninput="preview('${esc(r.ticker)}')"></div>
-          <div class="fld"><label>כמות</label>
+          <div class="fld"><label>קנייה לפי</label>
+            <select id="m-${esc(r.ticker)}" onchange="modeChange('${esc(r.ticker)}')">
+              <option value="qty">כמות מניות</option>
+              <option value="amount">סכום בדולרים</option></select></div>
+          <div class="fld"><label id="ql-${esc(r.ticker)}">כמות</label>
             <input id="q-${esc(r.ticker)}" type="number" step="1" min="1" value="1"
                    oninput="preview('${esc(r.ticker)}')"></div>
           <div class="fld"><label>סטופ</label>
@@ -407,6 +447,34 @@ function togglePanel(t){
 
 const LV = {};
 function useStop(t){ const c = $("st-"+t); return !!(c && c.checked); }
+function modeOf(t){ const m = $("m-"+t); return m ? m.value : "qty"; }
+
+function modeChange(t){
+  const amount = modeOf(t) === "amount", q = $("q-"+t);
+  $("ql-"+t).textContent = amount ? "סכום ($)" : "כמות";
+  q.step = amount ? "0.01" : "1";
+  q.min = amount ? "1" : "1";
+  q.value = amount ? "1000" : "1";
+  preview(t);
+}
+
+// אותו חישוב כמו split_amount בשרת: מניות שלמות, ושבר רק אם הוא שווה דולר לפחות
+function splitAmount(amount, price){
+  if (!(amount > 0 && price > 0)) return {whole: 0, frac: 0};
+  const shares = amount / price;
+  const whole = Math.floor(shares + 1e-9);
+  let frac = Math.round((shares - whole) * 1e6) / 1e6;
+  if (frac * price < 1) frac = 0;
+  return {whole, frac};
+}
+
+// מה נקנה בפועל: {whole, frac, total}
+function sizing(t, entry){
+  const v = parseFloat($("q-"+t).value) || 0;
+  if (modeOf(t) !== "amount") { const w = Math.floor(v); return {whole: w, frac: 0, total: w}; }
+  const s = splitAmount(v, entry);
+  return {...s, total: s.whole + s.frac, amount: v};
+}
 async function preview(t){
   const entry = parseFloat($("e-"+t).value);
   const row = WATCH.find(r => r.ticker === t) || {};
@@ -419,9 +487,16 @@ async function preview(t){
     $("s-"+t).textContent = st ? L.stop.toFixed(2) : "—";
     $("sh-"+t).textContent = st ? "סטופ, " + L.how : "ללא סטופ";
     $("d-"+t).textContent = L.deadline;
-    const qty = parseInt($("q-"+t).value) || 0;
-    const risk = (st && qty) ? ` סיכון עד הסטופ על ${qty} מניות: ${((entry - L.stop)*qty).toFixed(2)}$.` : "";
-    $("n-"+t).textContent = (st
+    const S = sizing(t, entry), qty = S.total;
+    const risk = (st && qty) ? ` סיכון עד הסטופ על ${+qty.toFixed(6)} מניות: ${((entry - L.stop)*qty).toFixed(2)}$.` : "";
+    let split = "";
+    if (modeOf(t) === "amount") {
+      split = !S.total ? "הסכום קטן מדולר אחד של מניה. "
+        : (S.whole ? `${S.whole} מניות שלמות, עם היעד${st ? " והסטופ" : ""} אצל אלפקה. ` : "") +
+          (S.frac ? `${S.frac} מניה נוספת בפקודת יום נפרדת, בלי יעד וסטופ — אלפקה לא מקבלת ` +
+                    `שבר מניה בפקודת GTC. אם לא תתבצע היום, היא תבוטל. ` : "");
+    }
+    $("n-"+t).textContent = split + (st
         ? `היעד והסטופ נשלחים יחד עם הכניסה ומבטלים זה את זה.${risk} הסטופ אינו חלק משיטת גראהם: ` +
           `אצלו ירידת מחיר בלי שינוי בשווי היא סיבה לקנות, לא למכור.`
         : `נשלחים הכניסה ויעד מכירה של +50%, בלי סטופ, לפי גראהם.`) +
@@ -441,14 +516,18 @@ function openDialog(html, word){
 function askSend(t){
   const L = LV[t];
   const entry = parseFloat($("e-"+t).value);
-  const qty = parseInt($("q-"+t).value);
-  if (!L || !entry || !qty){ showErr("מלא מחיר כניסה וכמות"); return; }
-  const st = useStop(t);
+  const S = entry ? sizing(t, entry) : {total: 0};
+  if (!L || !entry || !S.total){ showErr("מלא מחיר כניסה וכמות או סכום"); return; }
+  const st = useStop(t), byAmount = modeOf(t) === "amount", qty = S.total;
   MODE = "buy";
-  PENDING = {ticker:t, entry, qty, target:L.target, use_stop:st, stop: st ? L.stop : null};
+  PENDING = {ticker:t, entry, mode: byAmount ? "amount" : "qty",
+             qty: byAmount ? null : S.whole, amount: byAmount ? S.amount : null,
+             target:L.target, use_stop:st, stop: st ? L.stop : null};
   openDialog(`
     <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
-    <div class="row"><span>כמות</span><b>${qty}</b></div>
+    ${byAmount ? `<div class="row"><span>סכום</span><b>${S.amount.toFixed(2)}$</b></div>` : ""}
+    <div class="row"><span>מניות שלמות, עם יעד</span><b>${S.whole}</b></div>
+    ${S.frac ? `<div class="row"><span>שבר, פקודת יום בלי יעד</span><b>${S.frac}</b></div>` : ""}
     <div class="row"><span>כניסה, limit</span><b>${entry.toFixed(2)}</b></div>
     <div class="row"><span>יעד</span><b>${L.target.toFixed(2)}</b></div>
     <div class="row"><span>סטופ</span><b>${st ? L.stop.toFixed(2) : "ללא"}</b></div>
@@ -488,15 +567,19 @@ $("dlgsend").addEventListener("click", async () => {
       const r = await jpost("/api/order", body);
       $("dlg").close();
       showErr("");
+      const parts = [];
+      if (r.id) parts.push(`${r.qty} מניות: ${r.status}`);
+      if (r.fraction_id) parts.push(`שבר ${r.fraction}: ${r.fraction_status}`);
+      if (r.fraction_error) parts.push(`השבר נדחה: ${r.fraction_error}`);
       $("n-"+body.ticker).textContent =
-        `נשלח. מזהה ${r.id}, סטטוס ${r.status}. הוסף ל-positions.csv:  ${r.csv_row}`;
+        `נשלח. ${parts.join(" · ")}. הוסף ל-positions.csv:  ${r.csv_row}`;
     }
     refresh();
   } catch (e) { showErr(e.message); }
   finally { $("dlgsend").disabled = false; }
 });
 
-function refresh(){ loadStatus(); loadPositions(); loadOrders(); }
+function refresh(){ loadStatus(); loadPositions(); loadOrders(); drawChart(); }
 refresh(); loadWatch();
 setInterval(() => refresh(), 30000);
 setInterval(() => { if (MARKET_OPEN) loadWatch(); }, 120000);

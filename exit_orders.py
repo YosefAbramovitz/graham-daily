@@ -12,17 +12,24 @@
    כלומר פקודת היציאה תפוג כמה פעמים לפני המועד. ``exit_state`` מזהה פוזיציה
    שאין לה פקודת יציאה פעילה, או שזו עומדת לפוג, כדי שאפשר יהיה לחדש אותה.
 
+3. **שברי מניות רק בפקודת יום.** אלפקה מקבלת שבר מניה רק ב-time_in_force=day,
+   ובלי OTO, bracket או OCO. לכן קנייה לפי סכום מתפצלת: המניות השלמות נכנסות
+   לפקודה הרגילה עם יעד GTC, והשבר שנשאר נקנה בפקודת יום נפרדת, בלי פקודת
+   יציאה. גם פקודת יציאה מחודשת מוכרת רק את המניות השלמות.
+
 המודול לא שולח דבר לרשת; הוא רק בונה גופי בקשה ומפרש תשובות. כך אפשר לבדוק
 אותו בלי מפתחות, והלוגיקה זהה בסקריפט ובמסך.
 """
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 GTC_LIFETIME_DAYS = 90
 EXPIRY_WARN_DAYS = 14       # כמה ימים לפני הפקיעה להתחיל להתריע
+MIN_FRACTION_USD = 1.0      # אלפקה לא מקבלת פקודת שבר על פחות מדולר
 
 EXPIRY_NOTE = (
     "  שים לב: אלפקה מבטלת פקודות GTC תשעים יום אחרי שנוצרו. פקודת היציאה תפוג\n"
@@ -73,6 +80,33 @@ def exit_order_body(symbol: str, qty, target: float,
         body["take_profit"] = {"limit_price": f"{target:.2f}"}
         body["stop_loss"] = {"stop_price": f"{stop:.2f}"}
     return body
+
+
+def split_amount(amount: float, price: float) -> Tuple[int, float]:
+    """סכום בדולרים -> (מניות שלמות, שבר). שבר ששווה פחות מדולר נזרק."""
+    if not amount or not price or amount <= 0 or price <= 0:
+        return 0, 0.0
+    shares = amount / price
+    whole = int(math.floor(shares + 1e-9))
+    frac = round(shares - whole, 6)
+    if frac * price < MIN_FRACTION_USD:
+        frac = 0.0
+    return whole, frac
+
+
+def whole_shares(qty) -> int:
+    """החלק השלם של כמות, גם כשאלפקה מחזירה אותה כמחרוזת עם שבר."""
+    try:
+        return int(math.floor(float(qty) + 1e-9))
+    except (TypeError, ValueError):
+        return 0
+
+
+def fraction_order_body(symbol: str, qty: float, entry: float) -> dict:
+    """קניית שבר מניה: limit, יום בלבד, בלי יעד - אלפקה לא מאפשרת יותר מזה."""
+    return {"symbol": symbol, "qty": f"{qty:.6f}".rstrip("0").rstrip("."),
+            "side": "buy", "type": "limit", "limit_price": f"{entry:.2f}",
+            "time_in_force": "day"}
 
 
 # ---------------------------------------------------------------------------

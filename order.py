@@ -62,7 +62,7 @@ import requests
 
 from exit_orders import (EXPIRY_NOTE, describe_exit, entry_order_body,
                          exit_order_body, exit_orders_for, exit_state,
-                         flatten_orders, needs_renewal)
+                         flatten_orders, needs_renewal, whole_shares)
 
 PAPER_BASE = "https://paper-api.alpaca.markets"
 LIVE_BASE = "https://api.alpaca.markets"
@@ -367,11 +367,15 @@ def cmd_renew(args) -> int:
     if r.status_code != 200:
         sys.exit(f"שגיאה {r.status_code}: {r.text}")
     p = r.json()
-    qty = p.get("qty")
+    # פקודת GTC לא מקבלת שבר מניה; מחדשים רק את המניות השלמות.
+    qty = whole_shares(p.get("qty"))
     avg = float(p.get("avg_entry_price") or 0)
     cur = float(p.get("current_price") or 0)
-    if not qty or avg <= 0:
+    if avg <= 0:
         sys.exit("לא הצלחתי לקרוא כמות ומחיר כניסה מהפוזיציה.")
+    if qty < 1:
+        sys.exit("בפוזיציה יש רק שבר מניה. אלפקה לא מקבלת שבר בפקודת GTC, ולכן אין לו\n"
+                 "פקודת יציאה; מכירה תהיה ידנית.")
 
     use_stop = bool(args.with_stop or args.stop is not None)
     L = levels(avg, args.atr if args.atr is not None else atr_pct_for(sym))
