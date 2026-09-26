@@ -13,3 +13,7 @@ claude_desktop_config.json
 
 # הפלט של המסך כשהוא רץ ברקע (מכיל את הקישור עם הטוקן)
 app.log
+
+# מכשירים שאושרו לגישה מהרשת הביתית
+devices.json
+devices.tmp

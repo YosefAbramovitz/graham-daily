@@ -169,6 +169,15 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     </table></div>
   </details>
 
+  <details class="win" id="w-dev">
+    <summary><h2>מכשירים מאושרים</h2><span class="pill" id="c-dev">…</span>
+      <span class="sm">מכשירים ברשת הביתית שנכנסו פעם אחת עם הטוקן, ומעכשיו נכנסים בלעדיו</span></summary>
+    <div class="card"><table>
+      <thead><tr><th>מכשיר</th><th class="why">כתובת</th><th class="why">אושר</th><th>נראה לאחרונה</th><th></th></tr></thead>
+      <tbody id="dev"><tr><td colspan="5" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+  </details>
+
   <footer>
     הכניסה נשלחת עם יעד מכירה של +50%. סטופ נוסף רק אם סימנת אותו, כי אצל גראהם ירידת מחיר
     בלי שינוי בשווי היא סיבה לקנות ולא למכור. אלפקה מבטלת פקודות GTC אחרי 90 יום, ולכן
@@ -662,7 +671,7 @@ function openDialog(html, word, sendLabel, title){
   $("dlgword").hidden = !word;
   $("dlgword").placeholder = word ? `הקלד ${word} כדי לאשר` : "";
   $("dlgsend").textContent = sendLabel || "שלח";
-  $("dlgsend").classList.toggle("stop", MODE === "cancel");
+  $("dlgsend").classList.toggle("stop", MODE === "cancel" || MODE === "device");
   $("dlg").showModal();
   (word ? $("dlgword") : $("dlgsend")).focus();
 }
@@ -720,12 +729,16 @@ function askRenew(t){
 }
 
 $("dlgsend").addEventListener("click", async () => {
-  const word = MODE === "renew" ? "RENEW" : MODE === "cancel" ? "" : "BUY";
+  const word = MODE === "renew" ? "RENEW" : (MODE === "cancel" || MODE === "device") ? "" : "BUY";
   const label = $("dlgsend").textContent;
   if (word && $("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    if (MODE === "bulk") {
+    if (MODE === "device") {
+      await jpost("/api/devices/remove", {id: PENDING.id});
+      $("dlg").close();
+      loadDevices();
+    } else if (MODE === "bulk") {
       await sendBulk();
     } else if (MODE === "cancel") {
       await jpost("/api/cancel", {id: PENDING.id, confirm: "CANCEL"});
@@ -758,8 +771,31 @@ $("dlgsend").addEventListener("click", async () => {
   finally { $("dlgsend").disabled = false; $("dlgsend").textContent = label; }
 });
 
+const fdt = v => v ? new Date(v).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : "—";
+async function loadDevices(){
+  try {
+    const d = await jget("/api/devices");
+    const rows = d.rows || [];
+    $("c-dev").textContent = rows.length;
+    $("dev").innerHTML = rows.length ? rows.map(r => `<tr>
+        <td><b>${esc(r.name || "מכשיר")}</b>${r.current ? ` <span class="pill ok">המכשיר הזה</span>` : ""}</td>
+        <td class="num why">${esc(r.ip || "")}</td>
+        <td class="num why">${esc(fdt(r.first_seen))}</td>
+        <td class="num">${esc(fdt(r.last_seen))}</td>
+        <td><button class="btn danger" onclick="removeDevice('${esc(r.id)}', ${r.current})">הסר</button></td></tr>`).join("")
+      : `<tr><td colspan="5" class="empty">${d.lan ? "עוד אין מכשירים מאושרים. מכשיר נרשם כשהוא פותח את הקישור עם הטוקן." : "השרת לא רץ עם --lan, ולכן רק המחשב הזה נכנס."}</td></tr>`;
+  } catch (e) {
+    $("dev").innerHTML = `<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`;
+  }
+}
+async function removeDevice(id, isMe){
+  const msg = isMe ? "זה המכשיר שממנו אתה מחובר. אחרי ההסרה תצטרך את הקישור עם הטוקן כדי להיכנס שוב. להסיר?"
+                   : "להסיר את המכשיר? הוא יצטרך את הקישור עם הטוקן כדי להיכנס שוב.";
+  MODE = "device"; PENDING = {id};
+  openDialog(`<p style="margin:0">${esc(msg)}</p>`, "", "הסר מכשיר", "הסרת מכשיר");
+}
 function refresh(){ loadStatus(); loadPositions(); loadOrders(); drawChart(); }
-refresh(); loadWatch();
+refresh(); loadWatch(); loadDevices();
 setInterval(() => refresh(), 30000);
 setInterval(() => { if (MARKET_OPEN) loadWatch(); }, 120000);
 </script>

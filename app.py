@@ -24,8 +24,9 @@
 403. ברשת הפנימית נדרש גם טוקן, כי כל מכשיר באותו Wi-Fi (אורחים, מכשירים
 חכמים) יכול להגיע לשרת, ומהמסך אפשר לשלוח פקודות. הטוקן נוצר בהפעלה
 הראשונה, נשמר ב-.env בשם APP_TOKEN, והשרת מדפיס כתובת שמכילה אותו. פותחים
-אותה פעם אחת בטלפון, והטוקן נשמר שם בעוגייה ל-30 יום. מהמחשב עצמו לא נדרש
-טוקן.
+אותה פעם אחת בטלפון, והמכשיר נרשם כמאושר (devices.json, עוגייה לעשר שנים):
+מעכשיו הוא נכנס בלי טוקן. את המכשירים המאושרים רואים ומוחקים בחלון "מכשירים
+מאושרים" במסך. מחיקת devices.json מבטלת את כולם. מהמחשב עצמו לא נדרש טוקן.
 
 בכל הפעלה עם --lan הקישור נשלח גם לטלגרם, אם ב-.env מוגדרים
 TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. את ה-chat_id
@@ -55,6 +56,7 @@ TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. א
 from __future__ import annotations
 
 import csv
+import hashlib
 import hmac
 import io
 import ipaddress
@@ -161,9 +163,68 @@ def lan_ip() -> Optional[str]:
     return None
 
 
+# מכשירים שאושרו פעם אחת עם הטוקן. לכל מכשיר מזהה אקראי משלו בעוגייה, ורשימת
+# המזהים נשמרת ב-devices.json (מחוץ ל-git). כך אפשר לבטל מכשיר אחד בלי להחליף
+# את הטוקן, ומכשיר מאושר נכנס בלי טוקן גם אחרי הפעלה מחדש של השרת.
+DEVICES_FILE = HERE / "devices.json"
+DEVICE_COOKIE = "gd_device"
+DEVICE_MAX_AGE = 10 * 365 * 24 * 3600
+_devices: Optional[dict] = None
+
+
+def devices() -> dict:
+    global _devices
+    if _devices is None:
+        try:
+            _devices = json.loads(DEVICES_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _devices = {}
+    return _devices
+
+
+def save_devices() -> None:
+    tmp = DEVICES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(devices(), ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, DEVICES_FILE)
+
+
+def device_label(ua: str) -> str:
+    ua = ua or ""
+    os_name = next((n for k, n in (("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"),
+                                   ("Windows", "Windows"), ("Mac OS", "Mac")) if k in ua), "מכשיר")
+    app = next((n for k, n in (("Telegram", "טלגרם"), ("EdgA", "Edge"), ("Edg/", "Edge"),
+                               ("SamsungBrowser", "Samsung"), ("CriOS", "Chrome"), ("Chrome", "Chrome"),
+                               ("FxiOS", "Firefox"), ("Firefox", "Firefox"), ("Safari", "Safari")) if k in ua), "")
+    return f"{os_name} {app}".strip()
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def approve_device(resp):
+    """רושם את המכשיר הנוכחי כמאושר ומצמיד לו עוגייה לעשר שנים."""
+    did = secrets.token_urlsafe(24)
+    devices()[did] = {"name": device_label(request.headers.get("User-Agent", "")),
+                      "ip": request.remote_addr, "first_seen": now_iso(), "last_seen": now_iso()}
+    save_devices()
+    # Lax ולא Strict: הקישור נפתח מטלגרם (אתר אחר), ודפדפן לא שולח עוגייה
+    # Strict בשרשרת ניווט שהתחילה מאתר אחר - גם לא אחרי ההפניה. פעולות
+    # שמשנות משהו הן POST, ו-Lax לא שולח אותן מאתר אחר.
+    resp.set_cookie(DEVICE_COOKIE, did, max_age=DEVICE_MAX_AGE, httponly=True, samesite="Lax")
+    resp.delete_cookie(COOKIE)
+    return resp
+
+
+def current_device() -> Optional[str]:
+    did = request.cookies.get(DEVICE_COOKIE, "")
+    return did if did and did in devices() else None
+
+
 @app.before_request
 def guard():
-    """במצב --lan: רק המחשב עצמו או הרשת הפנימית, ומהרשת רק עם טוקן."""
+    """במצב --lan: רק המחשב עצמו או הרשת הפנימית. מהרשת: מכשיר שאושר פעם אחת
+    עם הטוקן נכנס מעכשיו בלי טוקן; מכשיר חדש צריך את הקישור עם הטוקן."""
     if not REMOTE:
         return None
     who = request.remote_addr or ""
@@ -175,18 +236,52 @@ def guard():
     given = request.args.get("t")
     if given is not None:
         if hmac.compare_digest(given, TOKEN):
-            # Lax ולא Strict: הקישור נפתח מטלגרם (אתר אחר), ודפדפן לא שולח עוגייה
-            # Strict בשרשרת ניווט שהתחילה מאתר אחר - גם לא אחרי ההפניה. פעולות
-            # שמשנות משהו הן POST, ו-Lax לא שולח אותן מאתר אחר.
-            resp = redirect(request.path)
-            resp.set_cookie(COOKIE, TOKEN, max_age=30 * 24 * 3600,
-                            httponly=True, samesite="Lax")
-            return resp
+            if current_device():
+                return redirect(request.path)
+            return approve_device(redirect(request.path))
         return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
-    if hmac.compare_digest(request.cookies.get(COOKIE, ""), TOKEN):
+    did = current_device()
+    if did:
+        d = devices()[did]
+        # לא לכתוב לקובץ בכל בקשה: עדכון "נראה לאחרונה" פעם בשעה מספיק
+        if d.get("last_seen", "")[:13] != now_iso()[:13]:
+            d["last_seen"], d["ip"] = now_iso(), who
+            save_devices()
         return None
-    return ("נדרש טוקן. פתח את הכתובת המלאה שהשרת הדפיס בהפעלה.", 401,
+    # עוגייה מהגרסה הקודמת (הטוקן עצמו, ל-30 יום): הופכים אותה למכשיר מאושר
+    if TOKEN and hmac.compare_digest(request.cookies.get(COOKIE, ""), TOKEN):
+        if request.method == "GET" and not request.path.startswith("/api/"):
+            return approve_device(redirect(request.full_path.rstrip("?")))
+        return None
+    return ("המכשיר לא מאושר. פתח פעם אחת את הקישור עם הטוקן (נשלח לטלגרם בהפעלה).", 401,
             {"Content-Type": "text/plain; charset=utf-8"})
+
+
+def device_key(did: str) -> str:
+    """מזהה קצר להצגה ולהסרה. המזהה עצמו משמש כסיסמה ולא יוצא מהשרת."""
+    return hashlib.sha256(did.encode()).hexdigest()[:12]
+
+
+@app.get("/api/devices")
+def api_devices():
+    me = current_device()
+    rows = [{"id": device_key(k), "name": v.get("name"), "ip": v.get("ip"), "first_seen": v.get("first_seen"),
+             "last_seen": v.get("last_seen"), "current": k == me}
+            for k, v in devices().items()]
+    rows.sort(key=lambda r: r.get("last_seen") or "", reverse=True)
+    return jsonify({"rows": rows, "lan": REMOTE})
+
+
+@app.post("/api/devices/remove")
+def api_devices_remove():
+    body = request.get_json(silent=True) or {}
+    key = str(body.get("id") or "")
+    did = next((k for k in devices() if device_key(k) == key), None)
+    if not did:
+        return jsonify({"error": "מכשיר לא נמצא"}), 404
+    del devices()[did]
+    save_devices()
+    return jsonify({"removed": key})
 
 
 # ---------------------------------------------------------------------------
