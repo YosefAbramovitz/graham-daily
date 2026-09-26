@@ -15,15 +15,21 @@
 
 ואז לפתוח את http://127.0.0.1:5000 בדפדפן.
 
-גישה מהטלפון, דרך Tailscale
----------------------------
-    python app.py --tailscale
+גישה מהטלפון, ברשת הביתית
+-------------------------
+    python app.py --lan
 
 השרת מאזין אז גם מחוץ למחשב, אבל מקבל רק שני סוגי כתובות: המחשב עצמו,
-וכתובות Tailscale (100.64.0.0/10). כל השאר מקבלים 403, גם אם הם באותה
-רשת Wi-Fi. מעבר לזה נדרש טוקן: הוא נוצר בהפעלה הראשונה, נשמר ב-.env בשם
-APP_TOKEN, והשרת מדפיס כתובת שמכילה אותו. פותחים אותה פעם אחת בטלפון,
-והטוקן נשמר שם בעוגייה ל-30 יום. מהמחשב עצמו לא נדרש טוקן.
+וכתובות של רשת פנימית (10.x, ‏172.16-31.x, ‏192.168.x). כל כתובת אחרת מקבלת
+403. ברשת הפנימית נדרש גם טוקן, כי כל מכשיר באותו Wi-Fi (אורחים, מכשירים
+חכמים) יכול להגיע לשרת, ומהמסך אפשר לשלוח פקודות. הטוקן נוצר בהפעלה
+הראשונה, נשמר ב-.env בשם APP_TOKEN, והשרת מדפיס כתובת שמכילה אותו. פותחים
+אותה פעם אחת בטלפון, והטוקן נשמר שם בעוגייה ל-30 יום. מהמחשב עצמו לא נדרש
+טוקן.
+
+אין הצפנה (http ולא https), ולכן זה מתאים לרשת הביתית ולא לרשת ציבורית.
+בהפעלה הראשונה ווינדוס עשוי לשאול אם לאפשר לפייתון גישה לרשת: לאשר לרשת
+פרטית בלבד.
 
 להחלפת הטוקן: למחוק את השורה APP_TOKEN מ-.env ולהפעיל מחדש.
 
@@ -52,7 +58,7 @@ import json
 import os
 import re
 import secrets
-import subprocess
+import socket
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -83,13 +89,13 @@ TECH_CSV = ("https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/"
 
 app = Flask(__name__, static_folder=None)
 LIVE = False          # נדרס מ---live בשורת ההפעלה
-REMOTE = False        # נדרס מ---tailscale בשורת ההפעלה
+REMOTE = False        # נדרס מ---lan בשורת ההפעלה
 TOKEN = ""
 COOKIE = "gd_token"
 
-# טווח הכתובות ש-Tailscale מחלק למכשירים (IPv4 ו-IPv6).
-TAILNET = (ipaddress.ip_network("100.64.0.0/10"),
-           ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+# טווחי הכתובות של רשת פנימית (RFC 1918, ו-IPv6 מקומי)
+LAN_NETS = tuple(ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "fe80::/10"))
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +117,9 @@ def is_local(value: str) -> bool:
     return bool(ip and ip.is_loopback)
 
 
-def is_tailnet(value: str) -> bool:
+def is_lan(value: str) -> bool:
     ip = _addr(value)
-    return bool(ip and any(ip in net for net in TAILNET))
+    return bool(ip and any(ip.version == net.version and ip in net for net in LAN_NETS))
 
 
 def ensure_token() -> str:
@@ -132,30 +138,35 @@ def ensure_token() -> str:
     return tok
 
 
-def tailscale_ip() -> Optional[str]:
-    # בווינדוס ההתקנה לא תמיד נכנסת ל-PATH, ולכן גם הנתיב הקבוע.
-    for exe in ("tailscale", r"C:\Program Files\Tailscale\tailscale.exe"):
-        try:
-            out = subprocess.run([exe, "ip", "-4"], capture_output=True,
-                                 text=True, timeout=10)
-        except (OSError, subprocess.SubprocessError):
-            continue
-        ip = (out.stdout or "").strip().splitlines()
-        if ip:
-            return ip[0].strip()
+def lan_ip() -> Optional[str]:
+    """הכתובת של המחשב ברשת הביתית. חיבור UDP לא שולח דבר; הוא רק בוחר ממשק."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("192.168.0.1", 9))
+            ip = sk.getsockname()[0]
+        if is_lan(ip):
+            return ip
+    except OSError:
+        pass
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if is_lan(ip):
+                return ip
+    except OSError:
+        pass
     return None
 
 
 @app.before_request
 def guard():
-    """במצב מרוחק: רק המחשב עצמו או Tailscale, ומ-Tailscale רק עם טוקן."""
+    """במצב --lan: רק המחשב עצמו או הרשת הפנימית, ומהרשת רק עם טוקן."""
     if not REMOTE:
         return None
     who = request.remote_addr or ""
     if is_local(who):
         return None
-    if not is_tailnet(who):
-        return ("גישה רק מהמחשב עצמו או דרך Tailscale.", 403,
+    if not is_lan(who):
+        return ("גישה רק מהמחשב עצמו או מהרשת הביתית.", 403,
                 {"Content-Type": "text/plain; charset=utf-8"})
     given = request.args.get("t")
     if given is not None:
@@ -929,7 +940,7 @@ def api_live():
 def main() -> int:
     global LIVE, REMOTE, TOKEN
     LIVE = "--live" in sys.argv
-    REMOTE = "--tailscale" in sys.argv
+    REMOTE = "--lan" in sys.argv
     port = 5000
     for i, a in enumerate(sys.argv):
         if a == "--port" and i + 1 < len(sys.argv):
@@ -944,17 +955,17 @@ def main() -> int:
     print(f"המסך רץ. פתח בדפדפן:  http://127.0.0.1:{port}")
     if REMOTE:
         TOKEN = ensure_token()
-        ts = tailscale_ip()
-        print("\nגישה מהטלפון (Tailscale בלבד). פתח פעם אחת את הכתובת הזאת בטלפון:")
-        if ts:
-            print(f"  http://{ts}:{port}/?t={TOKEN}")
+        ip = lan_ip()
+        print("\nגישה מהטלפון (רשת ביתית בלבד, הטלפון על אותו Wi-Fi). פתח פעם אחת בטלפון:")
+        if ip:
+            print(f"  http://{ip}:{port}/?t={TOKEN}")
         else:
-            print(f"  http://<כתובת ה-Tailscale של המחשב>:{port}/?t={TOKEN}")
-            print("  (לא מצאתי את הפקודה tailscale; הכתובת מופיעה באפליקציה של Tailscale)")
+            print(f"  http://<כתובת המחשב ברשת>:{port}/?t={TOKEN}")
+            print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
     print("לעצירה: Ctrl+C\n")
-    # בלי --tailscale: ‏127.0.0.1 בלבד. עם --tailscale: כל הממשקים, אבל guard()
-    # דוחה כל כתובת שאינה המחשב עצמו או Tailscale, ודורש טוקן מ-Tailscale.
+    # בלי --lan: ‏127.0.0.1 בלבד. עם --lan: כל הממשקים, אבל guard() דוחה כל
+    # כתובת שאינה המחשב עצמו או הרשת הפנימית, ודורש טוקן מהרשת.
     app.run(host="0.0.0.0" if REMOTE else "127.0.0.1", port=port, debug=False)
     return 0
 
