@@ -454,7 +454,7 @@ function sparkSvg(pts){
   const xy = pts.map((v, i) => `${(i / (pts.length - 1) * 62 + 1).toFixed(1)},${(20 - (v - lo) / span * 18).toFixed(1)}`).join(" ");
   const cls = pts[pts.length - 1] >= pts[0] ? "up" : "down";
   const pct = ((pts[pts.length - 1] / pts[0] - 1) * 100).toFixed(1);
-  return `<svg class="spk ${cls}" viewBox="0 0 64 22" preserveAspectRatio="none"><title>חודש: ${pct > 0 ? "+" : ""}${pct}%</title><polyline points="${xy}"/></svg>`;
+  return `<svg class="spk ${cls}" viewBox="0 0 64 22" preserveAspectRatio="none"><title>3 חודשים: ${pct > 0 ? "+" : ""}${pct}%</title><polyline points="${xy}"/></svg>`;
 }
 function pxCell(r){
   const s = SPARK[r.ticker], last = Number(r.last);

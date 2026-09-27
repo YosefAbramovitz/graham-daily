@@ -625,10 +625,11 @@ def status():
     return jsonify(out)
 
 
-# גרפים קטנים למסך המועמדות: סגירות יומיות של כחודש לכל הרשימה, בבקשה מרוכזת
+# גרפים קטנים למסך המועמדות: סגירות יומיות של כשלושה חודשים לכל הרשימה (מתאים
+# להחזקה של עד שנתיים - חודש הוא בעיקר רעש), בבקשה מרוכזת
 # אחת לאלפקה (לא בקשה לכל מניה - זה מה שהאט את המסך בעבר), ושמורות 30 דקות.
 SPARK_TTL = 1800
-SPARK_DAYS = 22
+SPARK_DAYS = 63                                  # כשלושה חודשי מסחר
 _sparks = {"at": 0.0, "syms": frozenset(), "data": {}}
 
 
@@ -642,7 +643,7 @@ def spark_data(syms) -> dict:
         return _sparks["data"]
     bars: dict = {}
     params = {"symbols": ",".join(sorted(syms)), "timeframe": "1Day", "limit": 10000,
-              "start": (date.today() - timedelta(days=45)).isoformat(),
+              "start": (date.today() - timedelta(days=100)).isoformat(),
               "feed": "iex", "adjustment": "all"}
     for _ in range(5):                                  # דפדוף, אם יש
         ok, data = api("GET", f"{DATA_BASE}/v2/stocks/bars", params=params)
