@@ -18,8 +18,8 @@ def test_holidays_and_exit_date():
 
 
 def test_size_risk_and_cap():
-    s = swing.size(100_000, 50.0, 47.5)          # 1% = 1000$, סיכון 2.5$ למניה
-    assert s["qty"] == 400 and s["risk"] == 1000.0 and not s["capped"]
+    s = swing.size(100_000, 50.0, 47.5)          # 0.5% = 500$, סיכון 2.5$ למניה
+    assert s["qty"] == 200 and s["risk"] == 500.0 and not s["capped"]
     s = swing.size(100_000, 50.0, 49.9)          # סטופ צמוד: תקרת 20% = 400 מניות
     assert s["qty"] == 400 and s["capped"]
     assert swing.size(100_000, 50.0, 48.0, risk_usd=100)["qty"] == 50
