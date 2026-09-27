@@ -186,8 +186,9 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     </div>
     <div class="card"><table>
       <thead><tr><th class="ck"><input type="checkbox" id="ckall" title="סמן הכול" onchange="bulkAll(this.checked)"></th>
-        <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th></tr></thead>
-      <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
+        <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th>
+        <th title="דירוג לפי תשואת הרווח התפעולי (EBIT/EV) מכל הרשימה. 15 הזולות מסומנות: בבדיקה לאחור 2017-2025 הן הניבו יותר מהשאר בכל שנה">זולה</th></tr></thead>
+      <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
 
@@ -526,8 +527,10 @@ async function loadWatch(){
         <td class="num" data-sort="${r.last ?? ""}"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
         <td class="num">${r.atr_pct ? r.atr_pct.toFixed(1)+"%" : "—"}</td>
         <td class="num">${r.quality_score ?? "—"}</td>
+        <td class="num" data-sort="${r.value_rank ?? ""}" title="${r.ebit_ev != null ? "EBIT/EV " + (100*r.ebit_ev).toFixed(1) + "%" : ""}">${r.value_rank
+          ? (r.value_top ? `<span class="pill ok">#${r.value_rank}</span>` : "#" + r.value_rank) : "—"}</td>
       </tr>
-      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="7">
+      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="8">
         <div class="panelbox">
           <div class="tvbox" id="tv-${esc(r.ticker)}"></div>
           <div class="fld"><label>מחיר כניסה</label>
@@ -551,11 +554,11 @@ async function loadWatch(){
           <button class="btn primary" onclick="askSend('${esc(r.ticker)}')">שלח פקודה</button>
           <p class="note" id="n-${esc(r.ticker)}"></p>
         </div></td></tr>`}`;
-    }).join("") : `<tr><td colspan="7" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
     bulkSummary();
     loadSparks();
   } catch (e) {
-    $("watch").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
+    $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 

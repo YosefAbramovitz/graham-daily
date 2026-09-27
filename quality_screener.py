@@ -43,6 +43,13 @@ ALTMAN_SAFE = 2.99
 
 RANK_FIELDS = ["ebit_ev", "gross_profitability", "momentum_12_1", "net_payout_yield"]
 
+# כמה מהזולות ביותר (לפי EBIT/EV) מסומנות כעדיפות. בבדיקה לאחור על S&P 1500,
+# 2017-2025 (variants_sim.py): עסקאות ב-15 הזולות הניבו בממוצע +36% מול +27%
+# בשאר (t=3.0), בכל אחת מתשע השנים; תיק של 15 מקומות +23% בשנה מול +17% לתיק
+# של 30. הסתייגות: היקום הוא רשימת המדד של היום, והטיית השרידות חזקה במיוחד
+# אצל הזולות ביותר - ולכן זו עדיפות בתצוגה, לא פסילה של השאר.
+VALUE_TOP_N = 15
+
 
 # ---------------------------------------------------------------------------
 # שליפה סלחנית משורות הדוחות של yfinance
@@ -408,6 +415,21 @@ def add_composite(df: pd.DataFrame, by_sector: bool = True) -> pd.DataFrame:
     return df
 
 
+def add_value_rank(df: pd.DataFrame, top: int = VALUE_TOP_N) -> pd.DataFrame:
+    """דירוג זולות על פני כל הרשימה: 1 = תשואת הרווח התפעולי הגבוהה ביותר.
+
+    בניגוד לציון האיכות, כאן הדירוג הוא על כל הרשימה ולא בתוך הענף - כך
+    בדיוק נבדק בבדיקה לאחור.
+    """
+    df = df.copy()
+    vals = pd.to_numeric(df.get("ebit_ev"), errors="coerce") if "ebit_ev" in df.columns \
+        else pd.Series(np.nan, index=df.index)
+    rank = vals.rank(ascending=False, method="first")
+    df["value_rank"] = [("" if pd.isna(v) else str(int(v))) for v in rank]
+    df["value_top"] = np.where(rank <= top, "כן", "")
+    return df
+
+
 def finalise_flags(df: pd.DataFrame) -> pd.DataFrame:
     """מוסיף את שתי הבדיקות שצריכות את הטבלה כולה ולא מניה בודדת.
 
@@ -520,7 +542,7 @@ def main():
               f"EBIT/EV {res['ebit_ev']} | מומנטום {res['momentum_12_1']}")
         time.sleep(args.sleep)
 
-    out = finalise_flags(add_composite(pd.DataFrame(rows)))
+    out = add_value_rank(finalise_flags(add_composite(pd.DataFrame(rows))))
     flagged = (out["red_flag"].astype(str).str.strip() != "").sum()
     thin = (out["liquidity_flag"].astype(str).str.strip() != "").sum()
     print(f"\n{flagged} מניות קיבלו דגל אדום מתוך {len(out)}.")

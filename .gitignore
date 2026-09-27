@@ -20,3 +20,4 @@ devices.tmp
 
 # תעודת SSL ומפתחות Let's Encrypt
 certs/
+variants_cache/

@@ -438,6 +438,8 @@ def _parse_watch(text: str) -> list:
             "signal_kind": (row.get("signal_kind") or "").strip(),
             "price": f("price"), "atr_pct": f("atr_pct"),
             "rsi": f("rsi"), "quality_score": f("quality_score"),
+            "ebit_ev": f("ebit_ev"), "value_rank": f("value_rank"),
+            "value_top": (row.get("value_top") or "").strip() == "כן",
         })
     return [r for r in rows if r["ticker"]]
 
