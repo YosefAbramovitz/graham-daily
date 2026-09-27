@@ -174,7 +174,7 @@ function rail(r){
       <div class="mk now" style="right:${now}%" title="עכשיו"></div></div>
     <div class="rl"><span>${stopG != null ? `סטופ <b>${n(usd(r.stop))}</b>` : n(pct(lo, 0))}</span>
       <span>${r.progress != null && r.gain > 0 ? `${n(Math.round(r.progress*100) + "%")} מהדרך ליעד` : r.gain < 0 ? "מתחת לכניסה" : ""}</span>
-      <span>יעד <b>${n(usd(r.target))}</b> ${n("+50%")}</span></div>`;
+      <span>${r.swing ? "סווינג: יציאה לפי זמן" : `יעד <b>${n(usd(r.target))}</b> ${n("+50%")}`}</span></div>`;
 }
 
 function exitPill(r){
@@ -202,7 +202,7 @@ function card(r){
     <div class="facts">
       <div><span>נקנתה</span><b>${n(esc(r.entry_date || "—"))}</b></div>
       <div><span>ימים בהחזקה</span><b>${r.held_days ?? "—"}</b></div>
-      <div><span>מועד יציאה</span><b class="${dl != null && dl <= 90 ? "down" : ""}">${n(esc(r.deadline || "—"))}</b>${dl != null ? `<i>עוד ${dl} ימים</i>` : ""}</div>
+      <div><span>מועד יציאה</span><b class="${dl != null && dl <= (r.swing ? 2 : 90) ? "down" : ""}">${n(esc(r.deadline || "—"))}</b>${dl != null ? `<i>עוד ${dl} ימים</i>` : ""}</div>
     </div>
     ${r.why ? `<div class="why">${esc(r.why)}</div>` : ""}
     <div class="foot">${exitPill(r)}${r.exit_limit && r.target && Math.abs(r.exit_limit - r.target) > 0.01

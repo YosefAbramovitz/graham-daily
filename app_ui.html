@@ -135,6 +135,9 @@ dialog input{font:inherit; width:100%; margin-top:12px; padding:8px 10px; border
   border:1px solid var(--line); background:var(--bg); color:var(--ink)}
 dialog .acts{display:flex; gap:8px; justify-content:flex-start; margin-top:14px}
 footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
+  .subh{font-size:13px;margin:14px 4px 6px;color:var(--muted, #777);font-weight:600}
+  .swinghead{padding:12px 14px}
+  td input.sw{width:84px}
 </style>
 </head>
 <body>
@@ -189,6 +192,36 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
         <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th>
         <th title="דירוג לפי תשואת הרווח התפעולי (EBIT/EV) מכל הרשימה. 15 הזולות מסומנות: בבדיקה לאחור 2017-2025 הן הניבו יותר מהשאר בכל שנה">זולה</th></tr></thead>
       <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+  </details>
+
+  <details class="win" id="w-swing">
+    <summary><h2>סווינג · טווח קצר</h2><span class="pill" id="c-swing">…</span>
+      <span class="sm" id="swing-asof"></span></summary>
+    <div class="card swinghead">
+      <p class="sm" style="margin:0 0 6px"><b>הכלל שעבר את הבדיקה לאחור:</b> מניה במגמה עולה (מעל ממוצע 200,
+        וממוצע 50 מעל 200) שירדה ל-RSI(14) מתחת ל-35, כש-SPY מעל ממוצע 200. כניסה למחרת, סטופ 1.5 ATR,
+        בלי יעד, ויציאה בסגירה של יום המסחר ה-15. סיכון קבוע לעסקה, עד 10 פוזיציות ועד 20% מההון בכל אחת.</p>
+      <p class="sm" style="margin:0" id="swing-bt"></p>
+      <div class="bulk" style="margin-top:10px">
+        <span id="swing-mkt" class="pill">…</span>
+        <div class="fld"><label>סיכון לעסקה ($)</label>
+          <input id="swing-risk" type="number" step="10" min="1" oninput="swingRiskChange()"></div>
+        <span class="sm" id="swing-slots"></span>
+        <span class="grow"></span>
+      </div>
+    </div>
+    <h3 class="subh">אותות להיום</h3>
+    <div class="card"><table>
+      <thead><tr><th>סימול</th><th title="דירוג לפי מומנטום חצי שנה, כמו בבדיקה">#</th><th>סגירה</th><th>RSI</th><th>ATR</th>
+        <th>מומנטום 6 ח'</th><th>כניסה (limit)</th><th>סטופ</th><th>כמות</th><th>סיכון</th><th></th></tr></thead>
+      <tbody id="swing"><tr><td colspan="11" class="empty">טוען…</td></tr></tbody>
+    </table></div>
+    <h3 class="subh">פוזיציות סווינג פתוחות</h3>
+    <div class="card"><table>
+      <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th><th>סטופ</th>
+        <th>יום</th><th>יציאה בסגירה של</th><th>מה לעשות</th><th></th></tr></thead>
+      <tbody id="swingpos"><tr><td colspan="10" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
 
@@ -397,6 +430,9 @@ async function loadPositions(){
 
 function exitCell(r){
   const st = r.exit_state, d = r.exit_days_left;
+  if (r.swing)   // סווינג: הפקודה היא הסטופ, והיציאה לפי זמן נעשית מלשונית הסווינג
+    return `<td data-sort="${st === "none" ? -1 : 9999}">${st === "none"
+      ? `<span class="pill no">אין סטופ</span>` : `<span class="pill ok">סטופ פעיל</span>`}</td>`;
   let pill;
   if (st === "none") pill = `<span class="pill no">אין פקודת יציאה</span>`;
   else if (st === "expiring") pill = `<span class="pill warn">פוקעת בעוד ${d} ימים</span>`;
@@ -779,7 +815,7 @@ function openDialog(html, word, sendLabel, title){
   $("dlgword").hidden = !word;
   $("dlgword").placeholder = word ? `הקלד ${word} כדי לאשר` : "";
   $("dlgsend").textContent = sendLabel || "שלח";
-  $("dlgsend").classList.toggle("stop", MODE === "cancel" || MODE === "device");
+  $("dlgsend").classList.toggle("stop", MODE === "cancel" || MODE === "device" || MODE === "swingclose");
   $("dlg").showModal();
   (word ? $("dlgword") : $("dlgsend")).focus();
 }
@@ -837,12 +873,21 @@ function askRenew(t){
 }
 
 $("dlgsend").addEventListener("click", async () => {
-  const word = MODE === "renew" ? "RENEW" : (MODE === "cancel" || MODE === "device") ? "" : "BUY";
+  const word = MODE === "renew" ? "RENEW" : MODE === "swingclose" ? "SELL"
+    : (MODE === "cancel" || MODE === "device") ? "" : "BUY";
   const label = $("dlgsend").textContent;
   if (word && $("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    if (MODE === "device") {
+    if (MODE === "swing" || MODE === "swingclose") {
+      const r = MODE === "swing"
+        ? await jpost("/api/swing/order", {...PENDING, confirm: "BUY"})
+        : await jpost("/api/swing/close", {ticker: PENDING.ticker, confirm: "SELL"});
+      $("dlg").close();
+      $("err").innerHTML = `<div class="err" style="background:var(--good-bg);color:var(--good-ink)">` +
+        `${esc(PENDING.ticker)}: ${MODE === "swing" ? `נשלחה קנייה של ${r.qty} מניות עם סטופ` : "נשלחה מכירה"} (${esc(r.status)}).</div>`;
+      loadSwing();
+    } else if (MODE === "device") {
       await jpost("/api/devices/remove", {id: PENDING.id});
       $("dlg").close();
       loadDevices();
@@ -879,6 +924,118 @@ $("dlgsend").addEventListener("click", async () => {
   finally { $("dlgsend").disabled = false; $("dlgsend").textContent = label; }
 });
 
+// ---- סווינג: טווח קצר (swing.py). הסריקה רצה בשרת פעם ביום מסחר.
+let SW = null;
+const SW_ENTRY = {};
+function swingRisk(){
+  const v = parseFloat($("swing-risk").value);
+  return v > 0 ? v : (SW && SW.equity ? SW.equity * SW.rules.risk_pct : 0);
+}
+function swingRiskChange(){
+  try { localStorage.setItem("swing:risk", $("swing-risk").value); } catch (e) {}
+  swingRows();
+}
+function swingSize(r){
+  const entry = SW_ENTRY[r.ticker] ?? Math.round(r.close * 1.01 * 100) / 100;
+  const stop = Math.round((entry - r.stop_dist) * 100) / 100;
+  const eq = SW.equity || 0, per = entry - stop;
+  let qty = per > 0 ? Math.floor(swingRisk() / per) : 0;
+  if (eq) qty = Math.min(qty, Math.floor(eq * SW.rules.max_position_pct / entry));
+  if (SW.cash != null) qty = Math.min(qty, Math.floor(Math.max(SW.cash, 0) / entry));
+  return {entry, stop, qty: Math.max(qty, 0), risk: Math.max(qty, 0) * per};
+}
+function swingEntry(t, v){ const x = parseFloat(v); if (x > 0) SW_ENTRY[t] = x; swingRows(); }
+function swingRows(){
+  if (!SW) return;
+  const rows = (SW.scan && SW.scan.rows) || [], blocked = SW.scan && SW.scan.market_ok === false;
+  const pend = new Set(SW.pending || []), held = new Set((SW.held || []).map(h => h.ticker));
+  $("swing").innerHTML = rows.length ? rows.map(r => {
+    const S = swingSize(r), busy = pend.has(r.ticker) || held.has(r.ticker);
+    const can = !blocked && !busy && S.qty > 0 && SW.slots_left > 0;
+    return `<tr>
+      <td class="tk">${esc(r.ticker)}</td><td class="num">${r.rank}</td>
+      <td class="num">${f2(r.close)}</td><td class="num">${r.rsi.toFixed(1)}</td>
+      <td class="num">${r.atr_pct.toFixed(1)}%</td>
+      <td class="num" data-sort="${r.mom ?? ""}">${r.mom != null ? pct(r.mom) : "—"}</td>
+      <td class="num" data-sort="${S.entry}"><input class="sw" type="number" step="0.01" value="${S.entry.toFixed(2)}"
+          onchange="swingEntry('${esc(r.ticker)}', this.value)"></td>
+      <td class="num">${S.stop.toFixed(2)}</td><td class="num">${S.qty}</td>
+      <td class="num">${S.risk.toFixed(0)}$</td>
+      <td>${busy ? `<span class="pill">${held.has(r.ticker) ? "מוחזקת" : "נשלחה"}</span>`
+           : `<button class="btn primary" ${can ? "" : "disabled"} onclick="askSwing('${esc(r.ticker)}')">קנה</button>`}</td></tr>`;
+  }).join("") : `<tr><td colspan="11" class="empty">${SW.running ? "סורק את S&P 1500… (כדקה)" : "אין אותות היום."}</td></tr>`;
+}
+async function loadSwing(){
+  try {
+    SW = await jget("/api/swing");
+    const sc = SW.scan || {}, bt = SW.backtest || {};
+    if (!$("swing-risk").value) {
+      let v = null; try { v = localStorage.getItem("swing:risk"); } catch (e) {}
+      $("swing-risk").value = v || (SW.equity ? Math.round(SW.equity * SW.rules.risk_pct) : "");
+    }
+    $("c-swing").textContent = (sc.rows || []).length;
+    $("swing-asof").textContent = SW.running ? "סורק…" : sc.as_of
+      ? `אותות מסגירת ${sc.as_of} · כניסה היום יוצאת עד ${SW.entry_exit_date}` : (SW.error || "");
+    $("swing-bt").innerHTML = `בדיקה לאחור ${esc(bt.period)} (תקופה שלא שימשה לבחירת הכלל): ${bt.trades} עסקאות,
+      ${Math.round(bt.win*100)}% מצליחות, בממוצע ${pct(bt.avg_ret)} לעסקה (${bt.exp_r}R) ב-${bt.days} ימים.
+      תיק לפי הכלל: ${pct(bt.cagr)} בשנה, ירידה מקסימלית ${pct(bt.maxdd)} — בערך כמו SPY באותה תקופה
+      (${pct(bt.spy_cagr)}, ירידה ${pct(bt.spy_maxdd)}). היתרון קטן, ובארבע מעשר השנים העסקאות הפסידו בממוצע.`;
+    const mk = sc.market_ok;
+    $("swing-mkt").className = "pill " + (mk === false ? "no" : mk ? "ok" : "");
+    $("swing-mkt").textContent = mk === false ? "SPY מתחת לממוצע 200 — אין כניסות חדשות"
+      : mk ? "SPY מעל ממוצע 200" : "שוק: לא ידוע";
+    $("swing-slots").textContent = `מקומות פנויים: ${SW.slots_left} מתוך ${SW.rules.max_positions}` +
+      (SW.error ? ` · ${SW.error}` : "") + (sc.warning ? ` · ${sc.warning}` : "");
+    swingRows();
+    const H = SW.held || [];
+    $("swingpos").innerHTML = H.length ? H.map(h => {
+      const g = (h.gain || 0) * 100, cls = h.action.startsWith("מכירה") ? "no" : "ok";
+      return `<tr><td class="tk">${esc(h.ticker)}</td><td class="num">${h.qty}</td>
+        <td class="num">${f2(h.entry)}<span class="sm">${esc(h.entry_date)}</span></td>
+        <td class="num">${f2(h.last)}</td>
+        <td class="num"><span class="${g>=0?'up':'down'}">${g>=0?"+":""}${g.toFixed(1)}%</span>
+          <span class="sm">${(h.pl>=0?"+":"") + (h.pl||0).toFixed(2)}$</span></td>
+        <td class="num">${h.stop ? f2(h.stop) : `<span class="pill no">אין</span>`}</td>
+        <td class="num">${h.day}/${SW.rules.hold_days}</td><td class="num">${esc(h.exit_date)}</td>
+        <td><span class="pill ${cls}">${esc(h.action)}</span></td>
+        <td><button class="btn danger" onclick="askSwingClose('${esc(h.ticker)}')">מכור עכשיו</button></td></tr>`;
+    }).join("") : `<tr><td colspan="10" class="empty">אין פוזיציות סווינג פתוחות.</td></tr>`;
+    if (SW.running) setTimeout(loadSwing, 15000);
+  } catch (e) {
+    $("swing").innerHTML = `<tr><td colspan="11" class="empty">${esc(e.message)}</td></tr>`;
+  }
+}
+function askSwing(t){
+  const r = ((SW.scan || {}).rows || []).find(x => x.ticker === t);
+  if (!r) return;
+  const S = swingSize(r);
+  MODE = "swing";
+  PENDING = {ticker: t, entry: S.entry, stop: S.stop, qty: S.qty};
+  openDialog(`
+    <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
+    <div class="row"><span>מניות</span><b>${S.qty}</b></div>
+    <div class="row"><span>כניסה, limit (GTC)</span><b>${S.entry.toFixed(2)}</b></div>
+    <div class="row"><span>סטופ (1.5 ATR)</span><b>${S.stop.toFixed(2)}</b></div>
+    <div class="row"><span>עלות משוערת</span><b>${(S.entry*S.qty).toFixed(2)}$</b></div>
+    <div class="row"><span>סיכון עד הסטופ</span><b>${S.risk.toFixed(2)}$</b></div>
+    <div class="row"><span>יציאה לפי זמן, בסגירה של</span><b>${esc(SW.entry_exit_date)}</b></div>
+    <p class="sm" style="margin:10px 0 0">בלי יעד רווח. אם הקנייה לא מתבצעת היום, בטל אותה בטבלת הפקודות —
+      הבדיקה לאחור נכנסה רק למחרת האות. היציאה לפי זמן לא אוטומטית: ביום ה-15 לחץ "מכור עכשיו".</p>`,
+    "BUY", "שלח קנייה", "קניית סווינג");
+}
+function askSwingClose(t){
+  const h = (SW.held || []).find(x => x.ticker === t);
+  if (!h) return;
+  MODE = "swingclose";
+  PENDING = {ticker: t};
+  openDialog(`
+    <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
+    <div class="row"><span>מניות</span><b>${h.qty}</b></div>
+    <div class="row"><span>רווח עכשיו</span><b>${pct(h.gain || 0)}</b></div>
+    <p class="sm" style="margin:10px 0 0">הסטופ יבוטל והפוזיציה תימכר במחיר השוק${MARKET_OPEN ? "" : " (השוק סגור: המכירה תתבצע בפתיחה)"}.</p>`,
+    "SELL", "מכור", "יציאה מסווינג");
+}
+
 const fdt = v => v ? new Date(v).toLocaleString("he-IL",{dateStyle:"short",timeStyle:"short"}) : "—";
 async function loadDevices(){
   try {
@@ -903,7 +1060,8 @@ async function removeDevice(id, isMe){
   openDialog(`<p style="margin:0">${esc(msg)}</p>`, "", "הסר מכשיר", "הסרת מכשיר");
 }
 function refresh(){ loadStatus(); loadPositions(); loadOrders(); drawChart(); }
-refresh(); loadWatch(); loadDevices();
+refresh(); loadWatch(); loadDevices(); loadSwing();
+setInterval(() => { if (MARKET_OPEN || WATCH_TICK % 5 === 0) loadSwing(); }, 120000);
 setInterval(() => refresh(), 30000);
 // מחיר: כל 2 דקות כשהשוק פתוח. הרשימה והאיתות מתחלפים פעם ביום (בבוקר, כשהשוק
 // סגור), ולכן גם כשהשוק סגור בודקים כל 10 דקות.

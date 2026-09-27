@@ -78,6 +78,7 @@ import re
 import secrets
 import socket
 import sys
+import threading
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -86,6 +87,7 @@ from typing import Optional
 import requests
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
+import swing
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
                          exit_state, flatten_orders, fraction_order_body,
                          split_amount, whole_shares)
@@ -699,11 +701,13 @@ def api_positions():
     if not ok:
         return jsonify(data), 502
     opened = entry_dates()
-    filled = fill_dates(closed_orders())
+    co = closed_orders()
+    filled = fill_dates(co)
     today = date.today()
     ok_o, orders = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
     orders = flatten_orders(orders) if ok_o and isinstance(orders, list) else None
     out = []
+    smap = swing_map(co)
     for p in data:
         sym = p["symbol"]
         gain = float(p.get("unrealized_plpc") or 0)
@@ -711,6 +715,18 @@ def api_positions():
         ent = opened.get(sym) or filled.get(sym)
         due = deadline_for(ent) if ent else None
         action, why = "החזקה", []
+        if sym in smap:
+            action, w, due = swing_advice(smap[sym], today)
+            out.append({
+                "ticker": sym, "qty": p.get("qty"),
+                "entry": float(p.get("avg_entry_price") or 0),
+                "last": float(p.get("current_price") or 0),
+                "gain": round(gain, 4), "pl": float(p.get("unrealized_pl") or 0),
+                "entry_date": smap[sym].isoformat(), "deadline": due.isoformat(),
+                "action": action, "why": w, "swing": True,
+                **{f"exit_{k}": v for k, v in exit_state(orders, sym, today).items()},
+            })
+            continue
         if gain >= PROFIT_TARGET:
             action = "מכירה"; why.append(f"הרווח {gain*100:.0f}% מעל יעד ה-50%")
         if due and today > due:
@@ -960,6 +976,8 @@ def api_renew():
     if not sym:
         return jsonify({"error": "חסר סימול"}), 400
     use_stop = bool(body.get("use_stop"))
+    if sym in swing_map(force=True):
+        return jsonify({"error": "זו פוזיציית סווינג: היציאה שלה לפי זמן, לא ביעד +50%"}), 400
 
     ok, pos = api("GET", f"{base()}/v2/positions/{sym}")
     if not ok:
@@ -1068,18 +1086,25 @@ def live_row(p: dict, quote: Optional[dict], ent: Optional[date], from_csv: bool
                   if o.get("type") == "limit" and o.get("limit_price")), None)
 
     action, why = "החזקה", []
-    if gain >= PROFIT_TARGET:
-        action = "מכירה"; why.append(f"הרווח {gain*100:.0f}% מעל יעד ה-50%")
-    if due and today > due:
-        action = "מכירה"; why.append(f"חלף המועד {due.isoformat()}")
-    elif due and action == "החזקה" and (due - today).days <= 90:
-        action = "מתקרב למועד"
-    if action == "החזקה" and gain >= 0.40:
-        action = "מתקרב ליעד"
-    if not ent:
-        why.append("אין תאריך כניסה")
-    elif not from_csv:
-        why.append("תאריך הכניסה מאלפקה")
+    sw = swing_map().get(sym)
+    if sw:
+        ent = sw
+        action, w, due = swing_advice(sw, today)
+        target = None
+        why.append(w)
+    else:
+        if gain >= PROFIT_TARGET:
+            action = "מכירה"; why.append(f"הרווח {gain*100:.0f}% מעל יעד ה-50%")
+        if due and today > due:
+            action = "מכירה"; why.append(f"חלף המועד {due.isoformat()}")
+        elif due and action == "החזקה" and (due - today).days <= 90:
+            action = "מתקרב למועד"
+        if action == "החזקה" and gain >= 0.40:
+            action = "מתקרב ליעד"
+        if not ent:
+            why.append("אין תאריך כניסה")
+        elif not from_csv:
+            why.append("תאריך הכניסה מאלפקה")
 
     return {
         "ticker": sym, "qty": qty, "entry": entry, "last": last,
@@ -1090,7 +1115,8 @@ def live_row(p: dict, quote: Optional[dict], ent: Optional[date], from_csv: bool
         "day_pl": round(qty * (last - prev), 2) if prev else None,
         "target": target, "exit_limit": limit, "stop": stop,
         # כמה מהדרך מהכניסה ליעד עברנו, 0 עד 1 (שלילי כשמתחת לכניסה)
-        "progress": round(gain / PROFIT_TARGET, 4) if entry else None,
+        "progress": round(gain / PROFIT_TARGET, 4) if entry and not sw else None,
+        "swing": bool(sw),
         "entry_date": ent.isoformat() if ent else None,
         "held_days": (today - ent).days if ent else None,
         "deadline": due.isoformat() if due else None,
@@ -1170,6 +1196,278 @@ def api_live():
         "orders_ok": orders is not None,
         "rows": rows, "pending": pending,
     })
+
+
+# ---------------------------------------------------------------------------
+# סווינג: טווח קצר (swing.py). הסריקה רצה פעם ביום מסחר, ברקע.
+# ---------------------------------------------------------------------------
+
+SWING_CACHE = HERE / "swing_cache.json"
+_swing = {"data": None, "running": False, "error": None, "universe": None, "uday": None}
+_swing_lock = threading.Lock()
+_swing_orders = {"at": 0.0, "map": {}}
+
+
+def last_closed_day() -> date:
+    """יום המסחר האחרון שנסגר (בשעון ניו יורק, עם רבע שעה ליישור הנתונים)."""
+    now = datetime.now(timezone.utc) - timedelta(hours=4)
+    d = now.date()
+    if not (swing.is_trading_day(d) and (now.hour, now.minute) >= (16, 15)):
+        d -= timedelta(days=1)
+        while not swing.is_trading_day(d):
+            d -= timedelta(days=1)
+    return d
+
+
+def _swing_universe() -> list:
+    if _swing["universe"] and _swing["uday"] == date.today():
+        return _swing["universe"]
+    from graham_screener import get_sp1500_tickers
+    u = sorted(set(get_sp1500_tickers()))
+    _swing.update(universe=u, uday=date.today())
+    return u
+
+
+def _swing_fetch(chunk: list, start: date, end: date, feed: str):
+    """(ok, bars) לקבוצת סימולים, עם דפדוף וניסיון חוזר על תקלה רגעית."""
+    got: dict = {}
+    params = {"symbols": ",".join(chunk), "timeframe": "1Day", "limit": 10000,
+              "start": start.isoformat(), "end": end.isoformat(),
+              "adjustment": "all", "feed": feed, "sort": "asc"}
+    for _ in range(40):
+        for attempt in range(3):
+            ok, data = api("GET", f"{DATA_BASE}/v2/stocks/bars", params=params)
+            err = str(data.get("error", "")) if not ok else ""
+            # רק תקלה רגעית שווה ניסיון נוסף: חריגת קצב, שגיאת שרת או חיבור
+            if ok or not any(x in err for x in ("429", "השיבה 5", "אין חיבור")):
+                break
+            time.sleep(2 * (attempt + 1))
+        if not ok:
+            return False, got
+        for sym, rows in (data.get("bars") or {}).items():
+            got.setdefault(sym, []).extend(rows)
+        if not data.get("next_page_token"):
+            return True, got
+        params["page_token"] = data["next_page_token"]
+    return True, got
+
+
+def _swing_bars(syms: list, start: date, end: date) -> dict:
+    """נרות יומיים מלאים, בקבוצות של מאה. SIP קודם (מחזור מלא), IEX כגיבוי.
+
+    סימול אחד שאלפקה לא מכירה מפיל את כל הבקשה (400), ולכן קבוצה שנכשלה
+    מתפצלת לחצאים עד שהסימול הבעייתי נשאר לבד ונזרק. סימולים עם מקף
+    (BRK-B) נשלחים עם נקודה, כמו שאלפקה כותבת אותם.
+    """
+    to_api = {s: s.replace("-", ".") for s in syms}
+    back = {v: k for k, v in to_api.items()}
+    out: dict = {}
+    todo = [[to_api[s] for s in syms[i:i + 100]] for i in range(0, len(syms), 100)]
+    while todo:
+        chunk = todo.pop()
+        ok, got = _swing_fetch(chunk, start, end, "sip")
+        if not ok:
+            ok, got = _swing_fetch(chunk, start, end, "iex")
+        if ok:
+            out.update({back.get(k, k): v for k, v in got.items()})
+        elif len(chunk) > 1:
+            todo += [chunk[:len(chunk) // 2], chunk[len(chunk) // 2:]]
+    return out
+
+
+def _swing_frames(bars: dict, end: date):
+    import pandas as pd
+    fields = {"o": {}, "h": {}, "l": {}, "c": {}, "v": {}}
+    last = end.isoformat()
+    for sym, rows in bars.items():
+        rows = [b for b in rows if str(b.get("t", ""))[:10] <= last]
+        if not rows:
+            continue
+        idx = pd.to_datetime([str(b["t"])[:10] for b in rows])
+        for k in fields:
+            fields[k][sym] = pd.Series([float(b[k]) for b in rows], index=idx)
+    mk = lambda k: pd.DataFrame(fields[k]).sort_index().pipe(lambda d: d[~d.index.duplicated()])
+    return mk("c"), mk("h"), mk("l"), mk("v")
+
+
+def _swing_run(day: date) -> None:
+    try:
+        syms = _swing_universe() + ["SPY"]
+        bars = _swing_bars(syms, day - timedelta(days=swing.HISTORY_DAYS), day)
+        C, H, L, V = _swing_frames(bars, day)
+        res = swing.scan(C, H, L, V)
+        res.update(computed_at=now_iso(), universe=len(syms) - 1, priced=int(C.shape[1]),
+                   day=day.isoformat())
+        if res.get("as_of") != day.isoformat():
+            res["warning"] = f"הנתונים האחרונים מ-{res.get('as_of')}, לא מ-{day.isoformat()}"
+        _swing.update(data=res, error=None)
+        try:
+            SWING_CACHE.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+    except Exception as exc:  # noqa: BLE001 - הסריקה לא מפילה את השרת
+        _swing["error"] = f"הסריקה נכשלה: {exc}"
+    finally:
+        _swing["running"] = False
+
+
+def swing_state() -> dict:
+    """הסריקה האחרונה, ומפעיל חדשה ברקע אם היא לא של יום המסחר האחרון."""
+    if _swing["data"] is None and SWING_CACHE.exists():
+        try:
+            _swing["data"] = json.loads(SWING_CACHE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    day = last_closed_day()
+    fresh = (_swing["data"] or {}).get("day") == day.isoformat()
+    with _swing_lock:
+        if not fresh and not _swing["running"] and creds():
+            _swing.update(running=True, error=None)
+            threading.Thread(target=_swing_run, args=(day,), daemon=True).start()
+    return {"scan": _swing["data"], "running": _swing["running"], "error": _swing["error"]}
+
+
+def swing_map(orders: Optional[list] = None, force: bool = False) -> dict:
+    """סימול -> תאריך כניסה, לפוזיציות סווינג פתוחות. נשמר כמה דקות."""
+    if orders is not None:
+        _swing_orders.update(at=time.time(), map=swing.swing_entries(orders))
+    elif force or time.time() - _swing_orders["at"] > FILL_CACHE_SECONDS:
+        co = closed_orders()
+        if co is not None:
+            _swing_orders.update(at=time.time(), map=swing.swing_entries(co))
+    return _swing_orders["map"]
+
+
+def swing_advice(ent: date, today: date) -> tuple:
+    """(פעולה, הסבר, מועד יציאה) לפוזיציית סווינג."""
+    due = swing.exit_date(ent)
+    n = swing.trading_days_between(ent, today)
+    if today > due:
+        return "מכירה", f"סווינג: חלף מועד היציאה {due.isoformat()}", due
+    if today == due:
+        return "מכירה היום", f"סווינג: היום ה-{swing.HOLD_DAYS}, יציאה בסגירה", due
+    return "סווינג", f"סווינג: יום {n} מתוך {swing.HOLD_DAYS}, יציאה ב-{due.isoformat()}", due
+
+
+@app.get("/api/swing")
+def api_swing():
+    st = swing_state()
+    ok_a, acct = api("GET", f"{base()}/v2/account")
+    ok_p, pos = api("GET", f"{base()}/v2/positions")
+    ok_o, raw = api("GET", f"{base()}/v2/orders",
+                    params={"status": "open", "limit": 500, "nested": "true"})
+    orders = flatten_orders(raw) if ok_o and isinstance(raw, list) else None
+    smap = swing_map(force=True)
+    today = (datetime.now(timezone.utc) - timedelta(hours=4)).date()
+    held = []
+    for p in (pos if ok_p and isinstance(pos, list) else []):
+        sym = p["symbol"]
+        if sym not in smap:
+            continue
+        ent = smap[sym]
+        action, why, due = swing_advice(ent, today)
+        stop = next((_f(o.get("stop_price")) for o in exit_orders_for(orders or [], sym)
+                     if o.get("stop_price")), None)
+        held.append({
+            "ticker": sym, "qty": _f(p.get("qty")), "entry": _f(p.get("avg_entry_price")),
+            "last": _f(p.get("current_price")), "gain": _f(p.get("unrealized_plpc")),
+            "pl": _f(p.get("unrealized_pl")), "stop": stop, "entry_date": ent.isoformat(),
+            "day": swing.trading_days_between(ent, today), "exit_date": due.isoformat(),
+            "action": action, "why": why,
+        })
+    pending = [o.get("symbol") for o in (raw if ok_o and isinstance(raw, list) else [])
+               if str(o.get("client_order_id") or "").startswith(swing.ORDER_PREFIX)
+               and o.get("side") == "buy"]
+    nxt = date.fromisoformat(st["scan"]["as_of"]) + timedelta(days=1) if (st["scan"] or {}).get("as_of") \
+        else today
+    return jsonify({
+        **st, "backtest": swing.BACKTEST, "held": held, "pending": pending,
+        "slots_left": max(0, swing.MAX_POSITIONS - len(held) - len(pending)),
+        "rules": {"rsi_max": swing.RSI_MAX, "stop_atr": swing.STOP_ATR, "hold_days": swing.HOLD_DAYS,
+                  "risk_pct": swing.RISK_PCT, "max_position_pct": swing.MAX_POSITION_PCT,
+                  "max_positions": swing.MAX_POSITIONS},
+        "equity": _f(acct.get("equity")) if ok_a else None,
+        "cash": _f(acct.get("cash")) if ok_a else None,
+        "entry_exit_date": swing.exit_date(nxt).isoformat(),
+    })
+
+
+@app.post("/api/swing/order")
+def api_swing_order():
+    """קניית סווינג: limit עם סטופ צמוד (OTO), מסומנת swing- כדי לזהות אותה אחר כך."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "BUY":
+        return jsonify({"error": "חסר אישור"}), 400
+    sym = str(body.get("ticker") or "").strip().upper()
+    try:
+        entry, stop, qty = float(body.get("entry")), float(body.get("stop")), int(body.get("qty"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "מחיר, סטופ או כמות לא תקינים"}), 400
+    scan = (_swing["data"] or {})
+    if not any(r["ticker"] == sym for r in scan.get("rows", [])):
+        return jsonify({"error": f"{sym} לא ברשימת האותות של היום"}), 400
+    if scan.get("market_ok") is False:
+        return jsonify({"error": "SPY מתחת לממוצע 200: לפי הכלל שנבדק אין כניסות חדשות"}), 400
+    if qty <= 0 or entry <= 0 or not stop < entry:
+        return jsonify({"error": "הכמות חייבת להיות חיובית והסטופ מתחת לכניסה"}), 400
+    ok_a, acct = api("GET", f"{base()}/v2/account")
+    equity = _f(acct.get("equity")) if ok_a else None
+    if equity and qty * entry > equity * swing.MAX_POSITION_PCT * 1.001:
+        return jsonify({"error": f"הפוזיציה מעל {swing.MAX_POSITION_PCT*100:.0f}% מההון"}), 400
+    ok_p, pos = api("GET", f"{base()}/v2/positions")
+    smap = swing_map(force=True)
+    open_swing = sum(1 for p in (pos if ok_p and isinstance(pos, list) else []) if p["symbol"] in smap)
+    if ok_p and isinstance(pos, list) and any(p["symbol"] == sym for p in pos):
+        return jsonify({"error": f"כבר יש פוזיציה ב-{sym}"}), 400
+    ok_o, raw = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
+    pend = [o for o in (raw if ok_o and isinstance(raw, list) else [])
+            if str(o.get("client_order_id") or "").startswith(swing.ORDER_PREFIX)]
+    if any(o.get("symbol") == sym for o in pend):
+        return jsonify({"error": f"כבר נשלחה קניית סווינג ל-{sym}"}), 400
+    if open_swing + len(pend) >= swing.MAX_POSITIONS:
+        return jsonify({"error": f"כבר {swing.MAX_POSITIONS} פוזיציות סווינג פתוחות או ממתינות"}), 400
+    market = last_trade(sym)
+    if market:
+        if entry > market * (1 + MAX_ENTRY_ABOVE_MARKET):
+            return jsonify({"error": f"מחיר הכניסה {entry:.2f} גבוה מדי מול השוק ({market:.2f})"}), 400
+        if stop >= market:
+            return jsonify({"error": f"הסטופ {stop:.2f} לא מתחת למחיר בשוק ({market:.2f})"}), 400
+    cid = f"{swing.ORDER_PREFIX}{sym}-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
+    ok, data = api("POST", f"{base()}/v2/orders",
+                   data=json.dumps(swing.order_body(sym, qty, entry, stop, cid)))
+    if not ok:
+        return jsonify(data), 502
+    return jsonify({"id": data.get("id"), "status": data.get("status"), "qty": qty})
+
+
+@app.post("/api/swing/close")
+def api_swing_close():
+    """יציאה מפוזיציית סווינג במחיר השוק: ביטול הסטופ, ואז סגירת הפוזיציה."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "SELL":
+        return jsonify({"error": "חסר אישור"}), 400
+    sym = str(body.get("ticker") or "").strip().upper()
+    if sym not in swing_map(force=True):
+        return jsonify({"error": f"{sym} אינה פוזיציית סווינג"}), 400
+    ok, orders = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
+    if not ok:
+        return jsonify(orders), 502
+    ids = [o["id"] for o in flatten_orders(orders) if o.get("symbol") == sym and o.get("id")]
+    for oid in ids:
+        ok, err = api("DELETE", f"{base()}/v2/orders/{oid}")
+        if not ok:
+            return jsonify({"error": f"ביטול הסטופ נכשל, לא נמכר. {err.get('error', '')}"}), 502
+    for _ in range(15):
+        ok, left = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
+        if ok and not any(o.get("id") in ids for o in flatten_orders(left)):
+            break
+        time.sleep(1)
+    ok, data = api("DELETE", f"{base()}/v2/positions/{sym}")
+    if not ok:
+        data["error"] = ("הסטופ בוטל אבל המכירה נדחתה, והפוזיציה כרגע בלי סטופ. "
+                         + str(data.get("error", "")))
+        return jsonify(data), 502
+    return jsonify({"id": data.get("id"), "status": data.get("status"), "cancelled": len(ids)})
 
 
 # ---------------------------------------------------------------------------
