@@ -979,7 +979,7 @@ async function loadSwing(){
     $("swing-bt").innerHTML = `בדיקה לאחור ${esc(bt.period)} (תקופה שלא שימשה לבחירת הכלל): ${bt.trades} עסקאות,
       ${Math.round(bt.win*100)}% מצליחות, בממוצע ${pct(bt.avg_ret)} לעסקה (${bt.exp_r}R) ב-${bt.days} ימים.
       תיק לפי הכלל: ${pct(bt.cagr)} בשנה, ירידה מקסימלית ${pct(bt.maxdd)} — בערך כמו SPY באותה תקופה
-      (${pct(bt.spy_cagr)}, ירידה ${pct(bt.spy_maxdd)}). היתרון קטן, ובארבע מעשר השנים העסקאות הפסידו בממוצע.`;
+      (${pct(bt.spy_cagr)}, ירידה ${pct(bt.spy_maxdd)}). היתרון קטן, ובחמש מעשר השנים (2018, 2020, 2022, 2023, 2025) העסקאות הפסידו בממוצע.`;
     const mk = sc.market_ok;
     $("swing-mkt").className = "pill " + (mk === false ? "no" : mk ? "ok" : "");
     $("swing-mkt").textContent = mk === false ? "SPY מתחת לממוצע 200 — אין כניסות חדשות"
