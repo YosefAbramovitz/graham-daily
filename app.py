@@ -85,8 +85,10 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import Flask, jsonify, redirect, request, send_from_directory
+from flask import (Flask, has_request_context, jsonify, redirect, request,
+                   send_from_directory)
 
+import plans
 import swing
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
                          exit_state, flatten_orders, fraction_order_body,
@@ -351,11 +353,59 @@ def load_env() -> None:
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def creds() -> Optional[tuple]:
+# ---------------------------------------------------------------------------
+# כמה חשבונות: כל אסטרטגיה בחשבון paper משלה (מפתחות ב-.env), והמסך עובד מול
+# החשבון שנבחר (עוגייה gd_acct). נתוני שוק לא תלויים בחשבון - כל מפתח טוב להם.
+# ---------------------------------------------------------------------------
+
+ACCOUNTS = [  # (מזהה, שם, קידומת במשתני הסביבה)
+    ("swing", "סווינג", "ALPACA_SWING"),
+    ("spy", "S&P 500", "ALPACA_SPY"),
+    ("graham", "גראהם", "ALPACA_GRAHAM"),
+    ("main", "ראשי", "ALPACA_API"),
+]
+ACCT_COOKIE = "gd_acct"
+_acct_local = threading.local()
+
+
+def acct_keys(acct: str) -> Optional[tuple]:
     load_env()
-    k = os.environ.get("ALPACA_API_KEY_ID", "").strip()
-    s = os.environ.get("ALPACA_API_SECRET_KEY", "").strip()
+    prefix = dict((a, p) for a, _, p in ACCOUNTS).get(acct)
+    if not prefix:
+        return None
+    k = os.environ.get(f"{prefix}_KEY_ID", "").strip()
+    s = os.environ.get(f"{prefix}_SECRET_KEY", "").strip()
     return (k, s) if k and s else None
+
+
+def accounts_available() -> list:
+    return [a for a, _, _ in ACCOUNTS if acct_keys(a)]
+
+
+def current_acct() -> str:
+    a = getattr(_acct_local, "acct", None)
+    if not a and has_request_context():
+        a = request.args.get("acct") or request.cookies.get(ACCT_COOKIE)
+    avail = accounts_available()
+    return a if a in avail else (avail[0] if avail else "main")
+
+
+class using:
+    """עבודה מול חשבון מסוים בתוך בלוק (לולאות רקע, מסך ההשוואה)."""
+
+    def __init__(self, acct):
+        self.acct = acct
+
+    def __enter__(self):
+        self.prev = getattr(_acct_local, "acct", None)
+        _acct_local.acct = self.acct
+
+    def __exit__(self, *a):
+        _acct_local.acct = self.prev
+
+
+def creds() -> Optional[tuple]:
+    return acct_keys(current_acct())
 
 
 def headers() -> dict:
@@ -612,10 +662,30 @@ def index():
     return send_from_directory(HERE, "app_ui.html")
 
 
+@app.get("/api/accounts")
+def api_accounts():
+    avail = accounts_available()
+    cur = current_acct()
+    return jsonify({"current": cur, "rows": [{"id": a, "label": l, "ok": a in avail}
+                                             for a, l, _ in ACCOUNTS if a in avail]})
+
+
+@app.post("/api/account")
+def api_account():
+    a = str((request.get_json(silent=True) or {}).get("id") or "")
+    if a not in accounts_available():
+        return jsonify({"error": "אין מפתחות לחשבון הזה"}), 400
+    resp = jsonify({"current": a})
+    resp.set_cookie(ACCT_COOKIE, a, max_age=DEVICE_MAX_AGE, httponly=True, samesite="Lax",
+                    secure=request.is_secure)
+    return resp
+
+
 @app.get("/api/status")
 def status():
     has = creds() is not None
-    out = {"keys": has, "live": LIVE, "market_open": None, "next_open": None}
+    out = {"keys": has, "live": LIVE, "market_open": None, "next_open": None,
+           "acct": current_acct(), "acct_label": dict((a, l) for a, l, _ in ACCOUNTS).get(current_acct())}
     if has:
         ok, clock = api("GET", f"{base()}/v2/clock")
         if ok:
@@ -1131,6 +1201,59 @@ def tabletools_js():
     return send_from_directory(HERE, "tabletools.js", mimetype="text/javascript", max_age=300)
 
 
+@app.get("/compare")
+def compare_page():
+    return send_from_directory(HERE, "compare_ui.html")
+
+
+_compare = {"at": 0.0, "data": None}
+
+
+@app.get("/api/compare")
+def api_compare():
+    """שלושת החשבונות זה מול זה: שווי, תשואה, ירידה מקסימלית, עסקאות, והיסטוריה יומית."""
+    if _compare["data"] and time.time() - _compare["at"] < 120:
+        return jsonify(_compare["data"])
+    rows = []
+    for a, label, _ in ACCOUNTS:
+        if not acct_keys(a):
+            continue
+        with using(a):
+            ok, acct = api("GET", f"{base()}/v2/account")
+            ok_h, hist = api("GET", f"{base()}/v2/account/portfolio/history",
+                             params={"period": "1A", "timeframe": "1D"})
+            ok_o, closed = api("GET", f"{base()}/v2/orders",
+                               params={"status": "closed", "limit": 500, "direction": "desc"})
+            ok_p, pos = api("GET", f"{base()}/v2/positions")
+        if not ok:
+            rows.append({"id": a, "label": label, "error": acct.get("error")})
+            continue
+        eq = [v for v in (hist.get("equity") or []) if v] if ok_h else []
+        ts = (hist.get("timestamp") or [])[-len(eq):] if eq else []
+        # ימים לפני שהחשבון קיבל כסף (שווי 0) לא נכנסים
+        pts = [[datetime.fromtimestamp(t, timezone.utc).date().isoformat(), round(float(v), 2)]
+               for t, v in zip(ts, eq) if v and v > 0]
+        equity = _f(acct.get("equity")) or 0.0
+        start = pts[0][1] if pts else equity
+        peak, mdd = 0.0, 0.0
+        for _, v in pts + [["now", equity]]:
+            peak = max(peak, v)
+            mdd = min(mdd, v / peak - 1) if peak else mdd
+        fills = [o for o in (closed if ok_o and isinstance(closed, list) else [])
+                 if o.get("filled_at")]
+        rows.append({
+            "id": a, "label": label, "equity": equity, "cash": _f(acct.get("cash")),
+            "start": start, "ret": (equity / start - 1) if start else None, "maxdd": mdd,
+            "positions": len(pos) if ok_p and isinstance(pos, list) else None,
+            "buys": sum(1 for o in fills if o.get("side") == "buy"),
+            "sells": sum(1 for o in fills if o.get("side") == "sell"),
+            "since": pts[0][0] if pts else None, "points": pts,
+        })
+    out = {"rows": rows, "at": now_iso()}
+    _compare.update(at=time.time(), data=out)
+    return jsonify(out)
+
+
 @app.get("/positions")
 def positions_page():
     return send_from_directory(HERE, "positions_ui.html")
@@ -1473,6 +1596,191 @@ def api_swing_close():
 
 
 # ---------------------------------------------------------------------------
+# קנייה יומית בלחיצה אחת לכל חשבון (plans.py): תצוגה מקדימה, ואז אישור BUY
+# ---------------------------------------------------------------------------
+
+def _book():
+    """חשבון, פוזיציות ופקודות פתוחות של החשבון הנוכחי."""
+    ok_a, acct = api("GET", f"{base()}/v2/account")
+    ok_p, pos = api("GET", f"{base()}/v2/positions")
+    ok_o, raw = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
+    if not (ok_a and ok_p and ok_o):
+        return None
+    equity = _f(acct.get("equity")) or 0.0
+    cash = min(_f(acct.get("cash")) or 0.0, _f(acct.get("buying_power")) or 0.0)
+    held = {p["symbol"] for p in pos}
+    return {"equity": equity, "cash": cash, "held": held, "orders": raw,
+            "busy": held | {o.get("symbol") for o in raw}}
+
+
+def swing_plan() -> dict:
+    swing_state()
+    scan = (_swing["data"] or {})
+    if _swing["running"]:
+        return {"plan": [], "reason": "הסריקה של היום עוד רצה - נסה שוב בעוד דקה"}
+    if scan.get("day") != last_closed_day().isoformat():
+        return {"plan": [], "reason": "אין סריקה מיום המסחר האחרון"}
+    if scan.get("market_ok") is False:
+        return {"plan": [], "reason": "SPY מתחת לממוצע 200: לפי הכלל אין כניסות חדשות"}
+    rows = scan.get("rows") or []
+    if not rows:
+        return {"plan": [], "reason": "אין אותות היום"}
+    b = _book()
+    if not b:
+        return {"plan": [], "reason": "לא הצלחתי לקרוא את החשבון"}
+    smap = swing_map(force=True)
+    open_swing = len(b["held"] & set(smap)) + sum(
+        1 for o in b["orders"] if o.get("side") == "buy"
+        and str(o.get("client_order_id") or "").startswith(swing.ORDER_PREFIX))
+    prices = {k: v["p"] for k, v in latest_prices([r["ticker"] for r in rows]).items()}
+    plan = plans.plan_swing(rows, b["equity"], b["cash"], prices, b["busy"], open_swing)
+    return {"plan": plan, "equity": b["equity"], "cash": b["cash"], "open": open_swing,
+            "reason": None if plan else "אין מקום פנוי או מזומן"}
+
+
+def graham_plan() -> dict:
+    rows = watchlist()
+    if not rows:
+        return {"plan": [], "reason": "רשימת המועמדות לא נטענה"}
+    b = _book()
+    if not b:
+        return {"plan": [], "reason": "לא הצלחתי לקרוא את החשבון"}
+    pending = {o.get("symbol") for o in b["orders"] if o.get("side") == "buy"}
+    prices = {k: v["p"] for k, v in latest_prices([r["ticker"] for r in rows]).items()}
+    plan = plans.plan_graham(rows, b["equity"], b["cash"], prices, b["busy"],
+                             len(b["held"] | pending))
+    return {"plan": plan, "equity": b["equity"], "cash": b["cash"], "held": len(b["held"]),
+            "reason": None if plan else "התיק מלא (15) או שאין מזומן"}
+
+
+def _wrong_acct(kind: str):
+    """כל תוכנית שייכת לחשבון שלה, אם הוא מוגדר - שלא ייקנה סווינג בחשבון גראהם."""
+    if kind in accounts_available() and current_acct() != kind:
+        label = dict((a, l) for a, l, _ in ACCOUNTS)[kind]
+        return f"זו תוכנית של חשבון {label}. עבור אליו בבורר החשבונות למעלה."
+    return None
+
+
+@app.get("/api/plan/<kind>")
+def api_plan(kind: str):
+    bad = _wrong_acct(kind)
+    if bad:
+        return jsonify({"plan": [], "reason": bad})
+    if kind == "swing":
+        return jsonify(swing_plan())
+    if kind == "graham":
+        return jsonify(graham_plan())
+    if kind == "spy":
+        b = _book()
+        px = last_trade("SPY")
+        if not b or not px:
+            return jsonify({"plan": [], "reason": "לא הצלחתי לקרוא חשבון או מחיר"})
+        p = plans.plan_spy(b["cash"], px)
+        return jsonify({"plan": [p] if p["qty"] else [], "cash": b["cash"],
+                        "reason": None if p["qty"] else "אין מזומן"})
+    return jsonify({"error": "סוג לא מוכר"}), 404
+
+
+@app.post("/api/plan/<kind>/buy")
+def api_plan_buy(kind: str):
+    """שולח את התוכנית שהמשתמש ראה ואישר (רק הסימולים שאושרו, מחושבים מחדש)."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "BUY":
+        return jsonify({"error": "חסר אישור"}), 400
+    want = {str(t).upper() for t in body.get("tickers") or []}
+    bad = _wrong_acct(kind)
+    if bad:
+        return jsonify({"error": bad}), 400
+    if kind == "swing":
+        plan = [p for p in swing_plan()["plan"] if p["ticker"] in want]
+    elif kind == "graham":
+        plan = [p for p in graham_plan()["plan"] if p["ticker"] in want]
+    elif kind == "spy":
+        b, px = _book(), last_trade("SPY")
+        plan = [plans.plan_spy(b["cash"], px)] if b and px and "SPY" in want else []
+    else:
+        return jsonify({"error": "סוג לא מוכר"}), 404
+    out = []
+    for p in plan:
+        if kind == "swing":
+            cid = f"{swing.ORDER_PREFIX}{p['ticker']}-{datetime.now():%Y%m%d%H%M%S}-{secrets.token_hex(2)}"
+            order = plans.swing_order(p, cid)
+        elif kind == "graham":
+            order = entry_order_body(p["ticker"], p["qty"], p["price"], p["target"])
+        else:
+            if p["qty"] < 1:
+                continue
+            order = {"symbol": "SPY", "qty": str(p["qty"]), "side": "buy", "type": "market",
+                     "time_in_force": "day"}
+        ok, data = api("POST", f"{base()}/v2/orders", data=json.dumps(order))
+        out.append({"ticker": p["ticker"], "qty": p["qty"], "ok": ok,
+                    "status": data.get("status") if ok else None,
+                    "error": None if ok else data.get("error")})
+        time.sleep(0.2)
+    return jsonify({"rows": out, "acct": current_acct()})
+
+
+# ---------------------------------------------------------------------------
+# תזכורות לטלגרם, פעם ביום: אותות סווינג ופוזיציות שהגיעו ליום ה-15
+# (הודעה בלבד - שום פקודה לא נשלחת מכאן)
+# ---------------------------------------------------------------------------
+
+REMIND_FILE = HERE / "reminders.json"
+
+
+def remind_tick() -> None:
+    try:
+        last = json.loads(REMIND_FILE.read_text(encoding="utf-8")).get("day")
+    except (OSError, ValueError):
+        last = None
+    if not accounts_available():
+        return
+    ok, clock = api("GET", f"{base()}/v2/clock")
+    if not ok or not clock.get("is_open"):
+        return
+    day = str(clock.get("timestamp", ""))[:10]
+    if day == last:
+        return
+    REMIND_FILE.write_text(json.dumps({"day": day}), encoding="utf-8")
+    lines = []
+    st = swing_state()
+    for _ in range(30):
+        if not _swing["running"]:
+            break
+        time.sleep(10)
+    scan = _swing["data"] or {}
+    rows = scan.get("rows") or []
+    if scan.get("market_ok") is False:
+        lines.append("סווינג: SPY מתחת לממוצע 200 - אין כניסות היום.")
+    elif rows:
+        top = [r["ticker"] for r in rows if r.get("quality") == 3][:8]
+        lines.append(f"סווינג: {len(rows)} אותות היום" + (f" (ציון 3: {', '.join(top)})" if top else "")
+                     + ". בחלון הסווינג: 'קנה את כל האותות'.")
+    if "swing" in accounts_available():
+        with using("swing"):
+            smap = swing_map(force=True)
+            ok_p, pos = api("GET", f"{base()}/v2/positions")
+        today = date.fromisoformat(day)
+        due = [s for s, d in smap.items() if ok_p and s in {p["symbol"] for p in pos}
+               and swing.exit_date(d) <= today]
+        if due:
+            lines.append("סווינג - יום 15, למכור היום (\"מכור עכשיו\"): " + ", ".join(sorted(due)))
+    if day[8:10] <= "07" and "graham" in accounts_available():
+        lines.append("גראהם: שבוע ראשון בחודש - 'קנייה חודשית' בחשבון גראהם.")
+    if lines:
+        telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
+
+
+def remind_loop() -> None:
+    while True:
+        try:
+            remind_tick()
+        except Exception:  # noqa: BLE001 - תזכורת שנכשלה לא מפילה את השרת
+            pass
+        time.sleep(300)
+
+
+# ---------------------------------------------------------------------------
 # הקישור לטלפון בטלגרם
 # ---------------------------------------------------------------------------
 
@@ -1532,6 +1840,21 @@ def send_ca_telegram(host: str) -> str:
                 else f"טלגרם: שליחת ה-CA נכשלה ({r.status_code}).")
     except (requests.RequestException, ValueError, OSError) as exc:
         return f"טלגרם: שליחת ה-CA נכשלה ({type(exc).__name__})."
+
+
+def telegram_send(text: str) -> bool:
+    """הודעה לטלגרם. לא זורק שגיאות; False אם לא נשלחה."""
+    load_env()
+    bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    chat = telegram_chat(bot) if bot else None
+    if not chat:
+        return False
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15,
+                          json={"chat_id": chat, "text": text, "disable_web_page_preview": True})
+        return bool(r.ok and r.json().get("ok"))
+    except (requests.RequestException, ValueError):
+        return False
 
 
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
@@ -1663,6 +1986,7 @@ def main() -> int:
             print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
     if REMOTE:
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
+    threading.Thread(target=remind_loop, daemon=True).start()
     print("לעצירה: Ctrl+C\n")
     # בלי --lan/--public: ‏127.0.0.1 בלבד. עם --lan: כל הממשקים, אבל guard() מקבל
     # רק את המחשב והרשת הפנימית, ודורש טוקן או מכשיר מאושר מהרשת. עם --public:

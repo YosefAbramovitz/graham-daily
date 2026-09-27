@@ -170,7 +170,9 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
 
   <details class="win" id="w-watch" open>
     <summary><h2>מועמדות מהמסך</h2><span class="pill" id="c-watch">…</span>
-      <span class="sm">מי שעבר את גראהם ואת שלב האיכות<span id="watch-asof"></span></span></summary>
+      <span class="sm">מי שעבר את גראהם ואת שלב האיכות<span id="watch-asof"></span></span>
+      <button class="btn primary" onclick="event.preventDefault(); askPlan('graham')"
+              title="עד 15 מניות במשקל שווה, הזולות קודם, עם יעד +50%">קנייה חודשית</button></summary>
     <div class="bulk" id="bulk" hidden>
       <b id="bulkn">0</b>
       <div class="fld"><label>קנייה לפי</label>
@@ -212,6 +214,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
           <input id="swing-risk" type="number" step="10" min="1" oninput="swingRiskChange()"></div>
         <span class="sm" id="swing-slots"></span>
         <span class="grow"></span>
+        <button class="btn primary" onclick="askPlan('swing')">קנה את כל האותות</button>
       </div>
     </div>
     <h3 class="subh">אותות להיום</h3>
@@ -401,6 +404,12 @@ async function loadStatus(){
     bits.push(s.market_open === null ? ""
       : s.market_open ? `<span class="pill ok">השוק פתוח</span>`
                       : `<span class="pill warn">השוק סגור</span>`);
+    try {
+      const A = await jget("/api/accounts");
+      if (A.rows.length > 1) bits.unshift(`<select id="acctsel" onchange="switchAcct(this.value)">` +
+        A.rows.map(r => `<option value="${esc(r.id)}" ${r.id === A.current ? "selected" : ""}>חשבון: ${esc(r.label)}</option>`).join("") +
+        `</select> <a class="btn" href="/compare">השוואת חשבונות</a>`);
+    } catch (e) { /* בלי בורר */ }
     if (s.equity) bits.push(`<span class="pill">שווי ${Number(s.equity).toFixed(2)}$</span>`);
     if (s.buying_power) bits.push(`<span class="pill">כוח קנייה ${Number(s.buying_power).toFixed(2)}$</span>`);
     bits.push(`<span class="grow"></span><span class="sm">עודכן ${new Date().toLocaleTimeString("he-IL")}</span>`);
@@ -884,7 +893,14 @@ $("dlgsend").addEventListener("click", async () => {
   if (word && $("dlgword").value.trim() !== word){ $("dlgword").focus(); return; }
   $("dlgsend").disabled = true;
   try {
-    if (MODE === "swing" || MODE === "swingclose") {
+    if (MODE === "plan") {
+      const r = await jpost("/api/plan/" + PENDING.kind + "/buy", {confirm: "BUY", tickers: PENDING.tickers});
+      $("dlg").close();
+      const good = r.rows.filter(x => x.ok).length;
+      $("err").innerHTML = `<div class="err res" style="${good === r.rows.length ? "background:var(--good-bg);color:var(--good-ink)" : ""}">` +
+        `נשלחו ${good} מתוך ${r.rows.length}.<br>` + r.rows.map(x => `${x.ok ? "✓" : "✗"} <b>${esc(x.ticker)}</b> ${x.qty} ${esc(x.status || x.error || "")}`).join("<br>") + `</div>`;
+      loadSwing();
+    } else if (MODE === "swing" || MODE === "swingclose") {
       const r = MODE === "swing"
         ? await jpost("/api/swing/order", {...PENDING, confirm: "BUY"})
         : await jpost("/api/swing/close", {ticker: PENDING.ticker, confirm: "SELL"});
@@ -1039,6 +1055,32 @@ function askSwing(t){
     <p class="sm" style="margin:10px 0 0">בלי יעד רווח. אם הקנייה לא מתבצעת היום, בטל אותה בטבלת הפקודות —
       הבדיקה לאחור נכנסה רק למחרת האות. היציאה לפי זמן לא אוטומטית: ביום ה-15 לחץ "מכור עכשיו".</p>`,
     "BUY", "שלח קנייה", "קניית סווינג");
+}
+async function switchAcct(id){
+  try { await jpost("/api/account", {id}); location.reload(); } catch (e) { showErr(e.message); }
+}
+const PLAN_TITLE = {swing: "סווינג: קניית כל האותות", graham: "גראהם: קנייה חודשית", spy: "S&P 500: כל המזומן ב-SPY"};
+async function askPlan(kind){
+  let d;
+  try { d = await jget("/api/plan/" + kind); } catch (e) { showErr(e.message); return; }
+  const P = d.plan || [];
+  if (!P.length) { showErr(d.reason || "אין מה לקנות"); return; }
+  MODE = "plan";
+  PENDING = {kind, tickers: P.map(p => p.ticker)};
+  const total = P.reduce((a, p) => a + p.value, 0);
+  const extra = kind === "swing" ? "<th>סטופ</th><th>סיכון</th><th>איכות</th>" : kind === "graham" ? "<th>יעד</th><th>זולה</th>" : "";
+  openDialog(`
+    <table class="mini"><thead><tr><th>סימול</th><th>מניות</th><th>מחיר</th>${extra}<th>שווי</th><th>% מהתיק</th></tr></thead><tbody>
+    ${P.map(p => `<tr><td><b>${esc(p.ticker)}</b></td><td class="num">${p.qty}</td><td class="num">${f2(p.price)}</td>
+      ${kind === "swing" ? `<td class="num">${f2(p.stop)}</td><td class="num">${p.risk.toFixed(0)}$</td><td class="num">${p.quality ?? "—"}/3</td>` : ""}
+      ${kind === "graham" ? `<td class="num">${f2(p.target)}</td><td class="num">${p.value_rank ? "#" + p.value_rank : "—"}</td>` : ""}
+      <td class="num">${p.value.toFixed(0)}$</td><td class="num">${p.pct ?? "—"}%</td></tr>`).join("")}
+    </tbody></table>
+    <div class="row"><span>${P.length} פקודות, סך הכול</span><b>${total.toFixed(0)}$ מתוך מזומן ${d.cash != null ? d.cash.toFixed(0) + "$" : "—"}</b></div>
+    <p class="sm" style="margin:8px 0 0">${kind === "swing" ? "קנייה בשוק עם סטופ צמוד (GTC). יציאה ביום ה-15 - תזכורת בטלגרם ו'מכור עכשיו'."
+      : kind === "graham" ? "limit קרוב למחיר עם יעד +50% (GTC). יציאה בסוף השנה השנייה לפי הכלל."
+      : "קנייה בשוק, להחזקה."}</p>`,
+    "BUY", `שלח ${P.length} פקודות`, PLAN_TITLE[kind]);
 }
 function askSwingClose(t){
   const h = (SW.held || []).find(x => x.ticker === t);

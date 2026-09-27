@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>השוואת חשבונות</title>
+<style>
+:root{
+  --bg:#faf8f4; --paper:#fff; --ink:#1c1a17; --muted:#6f6a60; --line:#e5e1d8;
+  --accent:#8a6a3b; --good-bg:#e4efe2; --good-ink:#2f6b34; --bad-bg:#f3e6e4; --bad-ink:#94413a;
+  --s1:#8a6a3b; --s2:#3b6a8a; --s3:#5f8a3b; --s4:#8a3b6a; --shadow:0 1px 3px rgba(28,26,23,.07);
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
+  --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
+  --s1:#c9a465; --s2:#6fa8d0; --s3:#9ccc6f; --s4:#d07fae; --shadow:0 1px 3px rgba(0,0,0,.35);
+}}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.wrap{max-width:1100px; margin:0 auto; padding:22px 16px 60px}
+.top{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px}
+h1{font-size:23px; margin:0}
+a.back{font-size:13px; color:var(--muted); text-decoration:none; border-bottom:1px dotted var(--muted)}
+.grow{flex:1}
+.sm{font-size:12px; color:var(--muted)}
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px}
+.card{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow)}
+.card h3{margin:0 0 6px; font-size:15px; display:flex; align-items:center; gap:8px}
+.sw{width:10px; height:10px; border-radius:3px; display:inline-block}
+.big{font-size:22px; font-weight:700; font-variant-numeric:tabular-nums}
+.row{display:flex; justify-content:space-between; font-size:13px; padding:2px 0}
+.up{color:var(--good-ink)} .down{color:var(--bad-ink)}
+.chart{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:14px}
+svg{width:100%; height:auto; display:block; direction:ltr}
+.btn{font:inherit; font-size:12px; font-weight:600; padding:5px 13px; border-radius:999px;
+  border:1px solid var(--line); background:transparent; color:var(--ink); cursor:pointer; margin-top:8px}
+.btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
+.err{background:var(--bad-bg); color:var(--bad-ink); padding:8px 12px; border-radius:8px; margin:10px 0; font-size:13px}
+.ok{background:var(--good-bg); color:var(--good-ink)}
+bdi{direction:ltr; unicode-bidi:isolate}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h1>השוואת חשבונות</h1><span class="grow"></span>
+    <a class="back" href="/">חזרה למסך המסחר</a></div>
+  <p class="sm">כל אסטרטגיה בחשבון paper משלה. התשואה נמדדת מהיום הראשון שבו היה כסף בחשבון.
+    בחודשים הראשונים ההבדלים הם בעיקר רעש - השוואה של ממש צריכה שנה ויותר.</p>
+  <div id="err"></div>
+  <div class="cards" id="cards"><div class="card">טוען…</div></div>
+  <div class="chart"><div class="sm" style="margin-bottom:6px">תשואה מצטברת מתחילת כל חשבון</div>
+    <div id="chart"></div></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = v => v == null ? "—" : `<bdi>${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%</bdi>`;
+const usd = v => v == null ? "—" : `<bdi>${Number(v).toLocaleString("en-US", {maximumFractionDigits: 0})}$</bdi>`;
+const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+async function jget(u){ const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; }
+async function jpost(u, b){ const r = await fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(b)});
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; }
+
+function chart(rows){
+  const series = rows.filter(r => r.points && r.points.length > 1);
+  if (!series.length) { $("chart").innerHTML = `<p class="sm">עוד אין מספיק היסטוריה לגרף.</p>`; return; }
+  const W = 1000, H = 280, P = 36;
+  const all = series.flatMap(r => r.points.map(p => p[1] / r.points[0][1] - 1));
+  const lo = Math.min(0, ...all), hi = Math.max(0, ...all), span = (hi - lo) || 0.01;
+  const days = [...new Set(series.flatMap(r => r.points.map(p => p[0])))].sort();
+  const x = d => P + (days.indexOf(d) / Math.max(1, days.length - 1)) * (W - 2 * P);
+  const y = v => H - P - ((v - lo) / span) * (H - 2 * P);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="תשואה מצטברת">`;
+  svg += `<line x1="${P}" x2="${W - P}" y1="${y(0)}" y2="${y(0)}" stroke="var(--line)" stroke-width="1.5"/>`;
+  for (const t of [lo, hi]) svg += `<text x="${W - P + 4}" y="${y(t) + 4}" font-size="12" fill="var(--muted)">${(t * 100).toFixed(0)}%</text>`;
+  svg += `<text x="${P}" y="${H - 10}" font-size="12" fill="var(--muted)">${days[0]}</text>`;
+  svg += `<text x="${W - P}" y="${H - 10}" font-size="12" fill="var(--muted)" text-anchor="end">${days[days.length - 1]}</text>`;
+  series.forEach((r) => {
+    const i = rows.indexOf(r), b = r.points[0][1];
+    const d = r.points.map((p, k) => `${k ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1] / b - 1).toFixed(1)}`).join("");
+    svg += `<path d="${d}" fill="none" stroke="${COLORS[i % 4]}" stroke-width="2.5" stroke-linejoin="round"/>`;
+  });
+  $("chart").innerHTML = svg + "</svg>";
+}
+
+async function buySpy(){
+  try {
+    const d = await jget("/api/plan/spy?acct=spy");
+    const p = (d.plan || [])[0];
+    if (!p) { $("err").innerHTML = `<div class="err">${esc(d.reason || "אין מה לקנות")}</div>`; return; }
+    const w = prompt(`לקנות ${p.qty} מניות SPY (כ-${p.value.toFixed(0)}$) בחשבון S&P 500? הקלד BUY לאישור`);
+    if (w !== "BUY") return;
+    const r = await jpost("/api/plan/spy/buy?acct=spy", {confirm: "BUY", tickers: ["SPY"]});
+    const x = r.rows[0] || {};
+    $("err").innerHTML = `<div class="err ${x.ok ? "ok" : ""}">${x.ok ? `נשלחה קנייה של ${x.qty} SPY (${esc(x.status)})` : esc(x.error || "לא נשלח")}</div>`;
+  } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+
+async function load(){
+  try {
+    const d = await jget("/api/compare");
+    const rows = d.rows || [];
+    $("cards").innerHTML = rows.length ? rows.map((r, i) => r.error
+      ? `<div class="card"><h3><span class="sw" style="background:${COLORS[i % 4]}"></span>${esc(r.label)}</h3><div class="err">${esc(r.error)}</div></div>`
+      : `<div class="card"><h3><span class="sw" style="background:${COLORS[i % 4]}"></span>${esc(r.label)}</h3>
+          <div class="big">${usd(r.equity)}</div>
+          <div class="row"><span>תשואה</span><b class="${(r.ret || 0) >= 0 ? "up" : "down"}">${pct(r.ret)}</b></div>
+          <div class="row"><span>ירידה מקסימלית</span><b>${pct(r.maxdd)}</b></div>
+          <div class="row"><span>מזומן</span><b>${usd(r.cash)}</b></div>
+          <div class="row"><span>פוזיציות</span><b>${r.positions ?? "—"}</b></div>
+          <div class="row"><span>קניות / מכירות</span><b>${r.buys} / ${r.sells}</b></div>
+          <div class="row"><span>מתחילת</span><b>${esc(r.since || "—")}</b></div>
+          ${r.id === "spy" && (r.cash || 0) > 100 ? `<button class="btn primary" onclick="buySpy()">השקע את המזומן ב-SPY</button>` : ""}
+        </div>`).join("") : `<div class="card">לא הוגדרו חשבונות ב-.env.</div>`;
+    chart(rows);
+  } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+load();
+setInterval(load, 300000);
+</script>
+</body>
+</html>
