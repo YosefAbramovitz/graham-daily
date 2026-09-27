@@ -54,6 +54,14 @@ td.ck input[disabled]{cursor:not-allowed; opacity:.3}
 table.mini{font-size:13px; margin:4px 0 8px}
 table.mini th, table.mini td{padding:5px 6px}
 .res{font-size:13px; line-height:1.9}
+.px{display:flex; align-items:center; gap:8px; justify-content:flex-end}
+.pxv{display:flex; flex-direction:column; align-items:flex-end; line-height:1.25}
+.pxv .chg{font-size:11px; font-weight:600}
+.spk{width:64px; height:22px; flex:none; overflow:visible}
+.spk polyline{fill:none; stroke:var(--muted); stroke-width:1.4; vector-effect:non-scaling-stroke; stroke-linejoin:round}
+.spk.up polyline{stroke:var(--good-ink)} .spk.down polyline{stroke:var(--bad-ink)}
+.chg.up{color:var(--good-ink)} .chg.down{color:var(--bad-ink)}
+@media (max-width:520px){ .spk{width:44px} }
 .btn.primary.stop{background:var(--bad-ink); border-color:var(--bad-ink)}
 .btn.danger{color:var(--bad-ink); border-color:color-mix(in srgb,var(--bad-ink) 40%,var(--line))}
 .btn.danger:hover:not([disabled]){background:var(--bad-bg); color:var(--bad-ink); border-color:var(--bad-ink)}
@@ -437,6 +445,33 @@ async function loadOrders(){
   }
 }
 
+// גרף קטן ושינוי יומי לכל מועמדת. הנתונים נטענים אחרי הטבלה (/api/sparks),
+// כך שהרשימה מופיעה מיד והגרפים מצטרפים רגע אחר כך.
+let SPARK = {}, SPARK_AT = 0;
+function sparkSvg(pts){
+  if (!pts || pts.length < 2) return `<svg class="spk" viewBox="0 0 64 22"></svg>`;
+  const lo = Math.min(...pts), hi = Math.max(...pts), span = (hi - lo) || 1;
+  const xy = pts.map((v, i) => `${(i / (pts.length - 1) * 62 + 1).toFixed(1)},${(20 - (v - lo) / span * 18).toFixed(1)}`).join(" ");
+  const cls = pts[pts.length - 1] >= pts[0] ? "up" : "down";
+  const pct = ((pts[pts.length - 1] / pts[0] - 1) * 100).toFixed(1);
+  return `<svg class="spk ${cls}" viewBox="0 0 64 22" preserveAspectRatio="none"><title>חודש: ${pct > 0 ? "+" : ""}${pct}%</title><polyline points="${xy}"/></svg>`;
+}
+function pxCell(r){
+  const s = SPARK[r.ticker], last = Number(r.last);
+  const pts = s ? [...s.c, ...(last ? [last] : [])] : null;
+  const chg = s && s.prev && last ? (last / s.prev - 1) * 100 : null;
+  return `${sparkSvg(pts)}<span class="pxv"><b>${f2(r.last)}</b>${chg === null ? "" :
+    `<span class="chg ${chg >= 0 ? "up" : "down"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`}</span>`;
+}
+async function loadSparks(force){
+  if (!force && Date.now() - SPARK_AT < 30 * 60000 && Object.keys(SPARK).length) return;
+  try {
+    const d = await jget("/api/sparks");
+    SPARK = d.sparks || {}; SPARK_AT = Date.now();
+    WATCH.forEach(r => { const el = $("px-" + r.ticker); if (el) el.innerHTML = pxCell(r); });
+  } catch (e) { /* בלי גרפים - הטבלה עובדת גם כך */ }
+}
+
 async function loadWatch(){
   try {
     const d = await jget("/api/watchlist");
@@ -454,7 +489,7 @@ async function loadWatch(){
             title="פתח את ${esc(r.ticker)} ב-Alpaca">${esc(r.ticker)}</a></td>
         <td>${esc(r.name)}<span class="sm">${esc(r.sector)}</span></td>
         <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span></td>
-        <td class="num">${f2(r.last)}</td>
+        <td class="num"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
         <td class="num">${r.atr_pct ? r.atr_pct.toFixed(1)+"%" : "—"}</td>
         <td class="num">${r.quality_score ?? "—"}</td>
         <td><button class="btn" ${blocked?"disabled":""}
@@ -486,6 +521,7 @@ async function loadWatch(){
         </div></td></tr>`}`;
     }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
     bulkSummary();
+    loadSparks();
   } catch (e) {
     $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
   }

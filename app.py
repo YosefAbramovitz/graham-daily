@@ -625,6 +625,51 @@ def status():
     return jsonify(out)
 
 
+# גרפים קטנים למסך המועמדות: סגירות יומיות של כחודש לכל הרשימה, בבקשה מרוכזת
+# אחת לאלפקה (לא בקשה לכל מניה - זה מה שהאט את המסך בעבר), ושמורות 30 דקות.
+SPARK_TTL = 1800
+SPARK_DAYS = 22
+_sparks = {"at": 0.0, "syms": frozenset(), "data": {}}
+
+
+def ny_today() -> date:
+    return (datetime.now(timezone.utc) - timedelta(hours=4)).date()
+
+
+def spark_data(syms) -> dict:
+    syms = frozenset(syms)
+    if syms <= _sparks["syms"] and time.time() - _sparks["at"] < SPARK_TTL:
+        return _sparks["data"]
+    bars: dict = {}
+    params = {"symbols": ",".join(sorted(syms)), "timeframe": "1Day", "limit": 10000,
+              "start": (date.today() - timedelta(days=45)).isoformat(),
+              "feed": "iex", "adjustment": "all"}
+    for _ in range(5):                                  # דפדוף, אם יש
+        ok, data = api("GET", f"{DATA_BASE}/v2/stocks/bars", params=params)
+        if not ok:
+            return _sparks["data"]                      # תקלה: מה שהיה
+        for sym, rows in (data.get("bars") or {}).items():
+            bars.setdefault(sym, []).extend(rows)
+        if not data.get("next_page_token"):
+            break
+        params["page_token"] = data["next_page_token"]
+    today = ny_today().isoformat()
+    out = {}
+    for sym, rows in bars.items():
+        # רק ימים שנסגרו: היום (אם יש) מוחלף בדף במחיר העדכני
+        closes = [float(b["c"]) for b in rows if str(b.get("t", ""))[:10] < today]
+        if closes:
+            out[sym] = {"c": [round(c, 4) for c in closes[-SPARK_DAYS:]], "prev": closes[-1]}
+    _sparks.update(at=time.time(), syms=syms, data=out)
+    return out
+
+
+@app.get("/api/sparks")
+def api_sparks():
+    syms = [r["ticker"] for r in watchlist()]
+    return jsonify({"sparks": spark_data(syms) if syms and creds() else {}, "days": SPARK_DAYS})
+
+
 @app.get("/api/watchlist")
 def api_watchlist():
     rows = watchlist()
