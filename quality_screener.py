@@ -12,6 +12,8 @@
   פסילה
     * מדד בניש לזיהוי מניפולציה בדוחות (המודל בן שמונת המשתנים, Beneish 1999)
     * מדד אלטמן לסכנת חדלות פירעון (Altman 1968), על חברות שאינן פיננסיות
+    * רווח חד-פעמי: רווח לפני מס גבוה פי 1.5 ומעלה מהרווח התפעולי
+    * רווח שקרס: רווח 12 החודשים מתחת למחצית הממוצע של שלוש השנים
 
   דירוג
     * EBIT חלקי שווי פעילות — מדד הזול שנמצא החזק ביותר אצל גריי וקרלייל
@@ -94,6 +96,13 @@ REVENUE = ["Total Revenue", "Operating Revenue"]
 COGS = ["Cost Of Revenue", "Cost Of Goods Sold"]
 GROSS_PROFIT = ["Gross Profit"]
 EBIT_ROWS = ["EBIT", "Operating Income", "Total Operating Income As Reported"]
+# לתשואת הרווח התפעולי: הרווח מהפעילות עצמה. שורת "EBIT" של yahoo כוללת גם
+# רווחים שאינם תפעוליים (למשל מכירת החזקה), וכך מניה נראית זולה בגלל אירוע
+# חד-פעמי. הבדיקה לאחור (variants_build.py) השתמשה ב-OperatingIncomeLoss של
+# ה-SEC - כלומר בשורה הזו.
+OPERATING_ROWS = ["Operating Income", "Total Operating Income As Reported", "EBIT"]
+PRETAX = ["Pretax Income"]
+DILUTED_EPS = ["Diluted EPS", "Basic EPS"]
 NET_INCOME = ["Net Income Continuous Operations", "Net Income From Continuing Operation Net Minority Interest",
               "Net Income", "Net Income Common Stockholders"]
 SGA = ["Selling General And Administration", "Selling General Administrative",
@@ -106,6 +115,51 @@ CFO = ["Operating Cash Flow", "Total Cash From Operating Activities",
 DIVIDENDS = ["Cash Dividends Paid", "Common Stock Dividend Paid", "Dividends Paid"]
 BUYBACK = ["Repurchase Of Capital Stock", "Repurchase Of Common Stock"]
 ISSUANCE = ["Issuance Of Capital Stock", "Common Stock Issuance", "Net Common Stock Issuance"]
+
+
+# רווח לפני מס שגבוה פי 1.5 מהרווח התפעולי: רוב הרווח לא בא מהעסק.
+ONE_OFF_RATIO = 1.5
+# רווח 12 החודשים האחרונים מתחת למחצית הממוצע של שלוש השנים האחרונות.
+COLLAPSE_RATIO = 0.5
+
+
+def one_off_gain(inc) -> bool:
+    """האם הרווח בשנה האחרונה נשען על רווח שאינו תפעולי (מכירת נכס, שערוך).
+
+    דוגמה: Boyd Gaming ב-2025 - מכירת החזקה ב-FanDuel הניבה רווח לפני מס של
+    2.3 מיליארד מול רווח תפעולי של 0.9 מיליארד, ומכפיל הרווח ירד ל-3.
+    """
+    pretax = pick(inc, PRETAX)
+    oper = pick(inc, OPERATING_ROWS[:2])
+    if pretax is None or oper is None or pretax <= 0:
+        return False
+    if oper <= 0:
+        return True
+    return pretax > ONE_OFF_RATIO * oper
+
+
+def earnings_collapse(inc, eps_ttm) -> bool:
+    """האם הרווח למניה ב-12 החודשים האחרונים קרס מול הממוצע של שלוש השנים.
+
+    המבחנים של גראהם מסתכלים על ממוצע רב-שנתי, ולכן חברה שהרווח שלה נחתך
+    השנה עדיין עוברת. דוגמה: Molina - 0.15 דולר למניה מול ממוצע של כ-16.
+    """
+    if eps_ttm is None:
+        return False
+    try:
+        eps_ttm = float(eps_ttm)
+    except (TypeError, ValueError):
+        return False
+    if math.isnan(eps_ttm):
+        return False
+    years = [pick(inc, DILUTED_EPS, col) for col in range(3)]
+    years = [y for y in years if y is not None]
+    if len(years) < 2:
+        return False
+    avg = sum(years) / len(years)
+    if avg <= 0:
+        return False
+    return eps_ttm < COLLAPSE_RATIO * avg
 
 
 def _ratio(a, b):
@@ -259,7 +313,7 @@ def net_payout_yield(cf, market_cap):
 # ---------------------------------------------------------------------------
 def _rank_metrics(out: dict, tk, bs, inc, cf, market_cap, ev) -> dict:
     """מדדי הדירוג בלבד. משותף לחברות תפעוליות ולפיננסיות."""
-    ebit = pick(inc, EBIT_ROWS)
+    ebit = pick(inc, OPERATING_ROWS)
     out["ebit_ev"] = round(ebit / ev, 4) if (ebit and ev and ev > 0) else ""
 
     gp = gross_profitability(bs, inc)
@@ -285,9 +339,21 @@ def _rank_metrics(out: dict, tk, bs, inc, cf, market_cap, ev) -> dict:
     return out
 
 
-def _finish_financial(out, tk, inc, cf, market_cap, ev, bs):
+def _earnings_flags(out: dict, inc, eps_ttm) -> list:
+    """שני מבחני איכות הרווח. חלים על כל סוגי החברות."""
+    flags = []
+    out["one_off_flag"] = "רווח חד-פעמי" if one_off_gain(inc) else ""
+    out["collapse_flag"] = "רווח קרס" if earnings_collapse(inc, eps_ttm) else ""
+    for k in ("one_off_flag", "collapse_flag"):
+        if out[k]:
+            flags.append(out[k])
+    return flags
+
+
+def _finish_financial(out, tk, inc, cf, market_cap, ev, bs, eps_ttm=None):
     out = _rank_metrics(out, tk, bs, inc, cf, market_cap, ev)
-    out["red_flag"] = ""      # אין מבחן פסילה שחל על חברה פיננסית
+    # בניש ואלטמן לא חלים על חברה פיננסית; מבחני הרווח כן
+    out["red_flag"] = " ו".join(_earnings_flags(out, inc, eps_ttm))
     return out
 
 
@@ -320,7 +386,8 @@ def analyse(ticker: str, company_type: str) -> dict:
         out["beneish_flag"] = "לא רלוונטי"
         out["altman_z"] = ""
         out["altman_flag"] = "לא רלוונטי"
-        return _finish_financial(out, tk, inc, cf, market_cap, ev, bs)
+        return _finish_financial(out, tk, inc, cf, market_cap, ev, bs,
+                                 info.get("trailingEps"))
 
     m, parts = beneish_m_score(bs, inc, cf)
     out["beneish_m"] = round(m, 2) if m is not None else ""
@@ -351,6 +418,7 @@ def analyse(ticker: str, company_type: str) -> dict:
         flags.append("בניש")
     if out["altman_flag"] == "סיכון חדלות פירעון":
         flags.append("אלטמן")
+    flags += _earnings_flags(out, inc, info.get("trailingEps"))
     out["red_flag"] = " ו".join(flags)
     return out
 
@@ -534,7 +602,8 @@ def main():
             res = {"ticker": ticker, "beneish_m": "", "beneish_flag": "אין נתונים",
                    "altman_z": "", "altman_flag": "אין נתונים", "ebit_ev": "",
                    "gross_profitability": "", "momentum_12_1": "",
-                   "net_payout_yield": "", "red_flag": ""}
+                   "net_payout_yield": "", "red_flag": "",
+                   "one_off_flag": "", "collapse_flag": ""}
         merged = {**src.to_dict(), **res}
         rows.append(merged)
         print(f"[{i}/{total}] {ticker}: בניש {res['beneish_m']} ({res['beneish_flag']}) | "

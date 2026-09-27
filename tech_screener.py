@@ -753,7 +753,8 @@ def main():
                       "momentum_12_1", "net_payout_yield", "red_flag",
                       "accruals", "accruals_flag", "liquidity_flag",
                       "dollar_volume", "next_earnings", "rank_bucket",
-                      "rank_basis", "data_source", "value_rank", "value_top"):
+                      "rank_basis", "data_source", "value_rank", "value_top",
+                      "one_off_flag", "collapse_flag"):
             row[field] = _clean(src.get(field, ""))
 
         # הסיווג נקבע מחדש אחרי המיזוג, כדי שדגל אדום יוכל לפסול איתות כניסה
