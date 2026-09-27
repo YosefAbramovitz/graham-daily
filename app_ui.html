@@ -54,6 +54,13 @@ td.ck input[disabled]{cursor:not-allowed; opacity:.3}
 table.mini{font-size:13px; margin:4px 0 8px}
 table.mini th, table.mini td{padding:5px 6px}
 .res{font-size:13px; line-height:1.9}
+tr.wrow{cursor:pointer}
+tr.wrow:hover td{background:color-mix(in srgb,var(--accent) 4%,transparent)}
+tr.wrow.open td{background:color-mix(in srgb,var(--accent) 7%,transparent); border-bottom-color:transparent}
+tr.wrow.blocked{cursor:default; opacity:.75}
+.tvbox{flex-basis:100%; height:380px; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--paper)}
+.tvbox:empty{display:none}
+@media (max-width:700px){ .tvbox{height:300px} }
 .px{display:flex; align-items:center; gap:8px; justify-content:flex-end}
 .pxv{display:flex; flex-direction:column; align-items:flex-end; line-height:1.25}
 .pxv .chg{font-size:11px; font-weight:600}
@@ -172,8 +179,8 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     </div>
     <div class="card"><table>
       <thead><tr><th class="ck"><input type="checkbox" id="ckall" title="סמן הכול" onchange="bulkAll(this.checked)"></th>
-        <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th><th>קנייה</th></tr></thead>
-      <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
+        <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th></tr></thead>
+      <tbody id="watch"><tr><td colspan="7" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
 
@@ -475,13 +482,24 @@ async function loadSparks(force){
 async function loadWatch(){
   try {
     const d = await jget("/api/watchlist");
-    WATCH = d.rows || [];
+    const rows = d.rows || [];
+    // אם הרשימה והאיתותים לא השתנו - מעדכנים רק מחירים, כדי לא לסגור חלונית
+    // קנייה פתוחה (ואת הגרף שבה) ולא למחוק מה שהוקלד.
+    const key = rows.map(r => r.ticker + "|" + r.signal).join(",");
+    if (key && key === WATCH_KEY && $("px-" + rows[0].ticker)) {
+      WATCH = rows;
+      rows.forEach(r => { const el = $("px-" + r.ticker); if (el) el.innerHTML = pxCell(r); });
+      loadSparks();
+      return;
+    }
+    WATCH_KEY = key;
+    WATCH = rows;
     $("c-watch").textContent = WATCH.length;
     $("watch-asof").textContent = d.as_of
       ? ` · איתות מ־${new Date(d.as_of).toLocaleString("he-IL",{weekday:"short",day:"numeric",month:"numeric",hour:"2-digit",minute:"2-digit"})}` : "";
     $("watch").innerHTML = WATCH.length ? WATCH.map(r => {
       const blocked = r.signal_kind === "פסילה";
-      return `<tr>
+      return `<tr class="${blocked ? "wrow blocked" : "wrow"}" ${blocked ? `title="נפסלה בשלב האיכות"` : `onclick="rowClick(event, '${esc(r.ticker)}')"`}>
         <td class="ck"><input type="checkbox" class="pick" data-t="${esc(r.ticker)}" ${blocked?"disabled":""}
             ${SEL.has(r.ticker) && !blocked ? "checked" : ""} onchange="bulkPick('${esc(r.ticker)}', this.checked)"></td>
         <td><a class="tk" href="https://app.alpaca.markets/stocks/${encodeURIComponent(r.ticker)}"
@@ -492,12 +510,10 @@ async function loadWatch(){
         <td class="num"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
         <td class="num">${r.atr_pct ? r.atr_pct.toFixed(1)+"%" : "—"}</td>
         <td class="num">${r.quality_score ?? "—"}</td>
-        <td><button class="btn" ${blocked?"disabled":""}
-            title="${blocked?"נפסלה בשלב האיכות":""}"
-            onclick="togglePanel('${esc(r.ticker)}')">קנייה</button></td>
       </tr>
-      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="8">
+      ${blocked ? "" : `<tr class="panel" id="p-${esc(r.ticker)}" hidden><td colspan="7">
         <div class="panelbox">
+          <div class="tvbox" id="tv-${esc(r.ticker)}"></div>
           <div class="fld"><label>מחיר כניסה</label>
             <input id="e-${esc(r.ticker)}" type="number" step="0.01"
                    value="${r.last ? Number(r.last).toFixed(2) : ""}"
@@ -519,18 +535,53 @@ async function loadWatch(){
           <button class="btn primary" onclick="askSend('${esc(r.ticker)}')">שלח פקודה</button>
           <p class="note" id="n-${esc(r.ticker)}"></p>
         </div></td></tr>`}`;
-    }).join("") : `<tr><td colspan="8" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="empty">לא נטענה רשימה. ודא חיבור לאינטרנט.</td></tr>`;
     bulkSummary();
     loadSparks();
   } catch (e) {
-    $("watch").innerHTML = `<tr><td colspan="8" class="empty">${esc(e.message)}</td></tr>`;
+    $("watch").innerHTML = `<tr><td colspan="7" class="empty">${esc(e.message)}</td></tr>`;
   }
+}
+
+let WATCH_KEY = "";
+
+// לחיצה בכל מקום בשורה פותחת/סוגרת את חלונית הקנייה - חוץ מתיבת הסימון והקישור.
+function rowClick(ev, t){
+  if (ev.target.closest("input, a, button, label")) return;
+  togglePanel(t);
 }
 
 function togglePanel(t){
   const el = $("p-"+t); if (!el) return;
   el.hidden = !el.hidden;
-  if (!el.hidden) preview(t);
+  const row = el.previousElementSibling; if (row) row.classList.toggle("open", !el.hidden);
+  if (!el.hidden) { preview(t); tvChart(t); }
+  else { const box = $("tv-"+t); if (box) box.innerHTML = ""; }   // משחרר את הגרף
+}
+
+// גרף TradingView בתוך החלונית. הקוד שלהם נטען רק כשפותחים שורה, לא בטעינת
+// הדף, וכשסוגרים את השורה הגרף נמחק.
+function tvChart(t){
+  const box = $("tv-"+t);
+  if (!box || box.childElementCount) return;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const wrap = document.createElement("div");
+  wrap.className = "tradingview-widget-container";
+  wrap.style.height = "100%";
+  const inner = document.createElement("div");
+  inner.className = "tradingview-widget-container__widget";
+  inner.style.height = "100%";
+  const sc = document.createElement("script");
+  sc.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
+  sc.async = true;
+  sc.textContent = JSON.stringify({
+    autosize: true, symbol: t, interval: "D", range: "3M", timezone: "Asia/Jerusalem",
+    theme: dark ? "dark" : "light", style: "3", locale: "he_IL",
+    hide_side_toolbar: true, hide_volume: true, allow_symbol_change: false,
+    save_image: false, calendar: false, withdateranges: true,
+    support_host: "https://www.tradingview.com"});
+  wrap.append(inner, sc);
+  box.append(wrap);
 }
 
 const LV = {};
