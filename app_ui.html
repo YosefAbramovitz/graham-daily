@@ -208,6 +208,9 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
       <p class="sm" style="margin:6px 0 0"><b>ציון איכות (0-3):</b> מגמה חזקה, תיקון עמוק ומחזור נמוך בירידה.
         בבדיקה, עסקה עם ציון 3 הניבה בממוצע פי 2.5 מאות רגיל, וציון 0-1 הפסיד — אבל העדפה של ציון 3
         לא שיפרה את התשואה של התיק כולו. מידע לבחירה, לא כלל.</p>
+      <p class="sm" style="margin:6px 0 0"><b>ענף:</b> "לבד" = המניה ירדה בזמן שהענף שלה עלה ב-10 הימים האחרונים.
+        בבדיקה אותות כאלה (כשליש) הרוויחו כמעט אפס בשתי התקופות, מול כ-0.12R לעסקה כשהענף ירד איתה —
+        כנראה ירידה בגלל חדשות על החברה עצמה. גם זה מידע, לא כלל: תיק שדילג עליהם לא הרוויח יותר.</p>
       <div class="bulk" style="margin-top:10px">
         <span id="swing-mkt" class="pill">…</span>
         <div class="fld"><label>סיכון לעסקה ($)</label>
@@ -221,9 +224,10 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     <div class="card"><table>
       <thead><tr><th>סימול</th><th title="דירוג לפי מומנטום חצי שנה, כמו בבדיקה">#</th>
         <th title="0-3: מגמה חזקה (3.6%+ מעל ממוצע 200), תיקון עמוק (4.7%+ מתחת לממוצע 50), מחזור נמוך בירידה">איכות</th>
+        <th title="לבד = הענף עלה ב-10 הימים האחרונים והמניה ירדה. בבדיקה אותות כאלה הרוויחו כמעט אפס">ענף</th>
         <th>סגירה</th><th>RSI</th><th>ATR</th>
         <th>מומנטום 6 ח'</th><th>כניסה (limit)</th><th>סטופ</th><th>כמות</th><th>סיכון</th><th></th></tr></thead>
-      <tbody id="swing"><tr><td colspan="12" class="empty">טוען…</td></tr></tbody>
+      <tbody id="swing"><tr><td colspan="13" class="empty">טוען…</td></tr></tbody>
     </table></div>
     <h3 class="subh">פוזיציות סווינג פתוחות</h3>
     <div class="card"><table>
@@ -974,6 +978,14 @@ function qualPill(r){
   const cls = r.quality >= 3 ? "ok" : r.quality <= 1 ? "no" : "";
   return `<span class="pill ${cls}" title="${esc(why)}${qr != null ? ` · בבדיקה 2021-25: ${qr > 0 ? "+" : ""}${qr}R לעסקה` : ""}">${r.quality}/3</span>`;
 }
+function sectorPill(r){
+  if (r.alone == null) return "—";
+  const ar = (SW.backtest || {}).alone_r || {};
+  const v = r.alone ? ar.alone : ar.with;
+  const tip = `${r.sector || ""}: הענף ${r.sector10 >= 0 ? "עלה" : "ירד"} ${pct(r.sector10)} ב-10 ימים` +
+    (v != null ? ` · בבדיקה 2021-25: ${v > 0 ? "+" : ""}${v}R לעסקה` : "");
+  return `<span class="pill ${r.alone ? "no" : "ok"}" title="${esc(tip)}">${r.alone ? "לבד" : "עם הענף"}</span>`;
+}
 function swingEntry(t, v){ const x = parseFloat(v); if (x > 0) SW_ENTRY[t] = x; swingRows(); }
 function swingRows(){
   if (!SW) return;
@@ -985,6 +997,7 @@ function swingRows(){
     return `<tr>
       <td class="tk">${esc(r.ticker)}</td><td class="num">${r.rank}</td>
       <td data-sort="${r.quality ?? ""}">${qualPill(r)}</td>
+      <td data-sort="${r.sector10 ?? ""}">${sectorPill(r)}</td>
       <td class="num">${f2(r.close)}</td><td class="num">${r.rsi.toFixed(1)}</td>
       <td class="num">${r.atr_pct.toFixed(1)}%</td>
       <td class="num" data-sort="${r.mom ?? ""}">${r.mom != null ? pct(r.mom) : "—"}</td>
@@ -994,7 +1007,7 @@ function swingRows(){
       <td class="num">${S.risk.toFixed(0)}$</td>
       <td>${busy ? `<span class="pill">${held.has(r.ticker) ? "מוחזקת" : "נשלחה"}</span>`
            : `<button class="btn primary" ${can ? "" : "disabled"} onclick="askSwing('${esc(r.ticker)}')">קנה</button>`}</td></tr>`;
-  }).join("") : `<tr><td colspan="12" class="empty">${SW.running ? "סורק את S&P 1500… (כדקה)" : "אין אותות היום."}</td></tr>`;
+  }).join("") : `<tr><td colspan="13" class="empty">${SW.running ? "סורק את S&P 1500… (כדקה)" : "אין אותות היום."}</td></tr>`;
 }
 async function loadSwing(){
   try {
@@ -1033,7 +1046,7 @@ async function loadSwing(){
     }).join("") : `<tr><td colspan="10" class="empty">אין פוזיציות סווינג פתוחות.</td></tr>`;
     if (SW.running) setTimeout(loadSwing, 15000);
   } catch (e) {
-    $("swing").innerHTML = `<tr><td colspan="12" class="empty">${esc(e.message)}</td></tr>`;
+    $("swing").innerHTML = `<tr><td colspan="13" class="empty">${esc(e.message)}</td></tr>`;
   }
 }
 function askSwing(t){
@@ -1045,6 +1058,7 @@ function askSwing(t){
   openDialog(`
     <div class="row"><span>סימול</span><b>${esc(t)}</b></div>
     <div class="row"><span>איכות</span><b>${r.quality ?? "—"}/3</b></div>
+    ${r.alone ? `<p class="sm" style="margin:6px 0;color:var(--bad-ink)">המניה ירדה לבד בזמן שהענף שלה עלה: בבדיקה לאחור אותות כאלה הרוויחו כמעט אפס, בשתי התקופות.</p>` : ""}
     ${r.quality != null && r.quality <= 1 ? `<p class="sm" style="margin:6px 0;color:var(--bad-ink)">ציון איכות ${r.quality}: אותות כאלה הפסידו בממוצע בבדיקה לאחור, בשתי התקופות.</p>` : ""}
     <div class="row"><span>מניות</span><b>${S.qty}</b></div>
     <div class="row"><span>כניסה, limit (GTC)</span><b>${S.entry.toFixed(2)}</b></div>

@@ -61,6 +61,23 @@ def test_scan_finds_pullback_in_uptrend():
     assert row["rsi"] < swing.RSI_MAX and row["stop_dist"] > 0
 
 
+def test_scan_sector_alone_flag():
+    idx = pd.bdate_range("2024-01-01", periods=300)
+    a = np.linspace(20, 60, 300)
+    a[-6:] = a[-7] * np.array([0.98, 0.96, 0.95, 0.94, 0.93, 0.92])   # AAA יורדת
+    b = np.linspace(20, 60, 300)
+    b[-10:] = b[-11] * np.linspace(1.03, 1.30, 10)                     # BBB עולה חזק
+    C = pd.DataFrame({"AAA": a, "BBB": b, "SPY": np.linspace(300, 500, 300)}, index=idx)
+    H, L = C * 1.01, C * 0.99
+    V = pd.DataFrame(2_000_000.0, index=idx, columns=C.columns)
+    row = swing.scan(C, H, L, V, sectors={"AAA": "X", "BBB": "X"})["rows"][0]
+    assert row["ticker"] == "AAA" and row["alone"] is True and row["sector10"] > 0
+    row = swing.scan(C, H, L, V, sectors={"AAA": "X", "BBB": "Y"})["rows"][0]
+    assert row["alone"] is False and row["sector10"] < 0                # הענף = AAA לבדה
+    row = swing.scan(C, H, L, V)["rows"][0]
+    assert row["alone"] is None and row["sector"] is None
+
+
 def test_quality_score():
     idx = pd.bdate_range("2024-01-01", periods=300)
     C = pd.DataFrame({"AAA": np.linspace(20, 60, 300)}, index=idx)

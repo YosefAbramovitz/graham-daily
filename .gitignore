@@ -22,5 +22,6 @@ devices.tmp
 certs/
 variants_cache/
 swing_cache.json
+swing_sectors.json
 reminders.json
 swing_auto.json

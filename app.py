@@ -1326,7 +1326,7 @@ def api_live():
 # ---------------------------------------------------------------------------
 
 SWING_CACHE = HERE / "swing_cache.json"
-SWING_SCAN_VERSION = 2      # להעלות כשמבנה הסריקה משתנה, כדי שסריקה ישנה תחושב מחדש
+SWING_SCAN_VERSION = 3      # להעלות כשמבנה הסריקה משתנה, כדי שסריקה ישנה תחושב מחדש
 _swing = {"data": None, "running": False, "error": None, "universe": None, "uday": None}
 _swing_lock = threading.Lock()
 _swing_orders = {"at": 0.0, "map": {}}
@@ -1414,12 +1414,38 @@ def _swing_frames(bars: dict, end: date):
     return mk("c"), mk("h"), mk("l"), mk("v")
 
 
+SWING_SECTORS = HERE / "swing_sectors.json"
+
+
+def _swing_sectors() -> dict:
+    """סימול -> ענף GICS מוויקיפדיה, נשמר לחודש. בלי רשת: הקובץ הקיים או של הבדיקה."""
+    try:
+        if time.time() - SWING_SECTORS.stat().st_mtime < 30 * 86400:
+            return json.loads(SWING_SECTORS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    try:
+        from variants_build import sectors
+        m = sectors()
+        if len(m) > 1000:
+            SWING_SECTORS.write_text(json.dumps(m), encoding="utf-8")
+            return m
+    except Exception:  # noqa: BLE001 - בלי ענפים הסריקה עדיין עובדת
+        pass
+    for p in (SWING_SECTORS, HERE / "variants_cache" / "sectors.json"):
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    return {}
+
+
 def _swing_run(day: date) -> None:
     try:
         syms = _swing_universe() + ["SPY"]
         bars = _swing_bars(syms, day - timedelta(days=swing.HISTORY_DAYS), day)
         C, H, L, V = _swing_frames(bars, day)
-        res = swing.scan(C, H, L, V)
+        res = swing.scan(C, H, L, V, sectors=_swing_sectors())
         res.update(computed_at=now_iso(), universe=len(syms) - 1, priced=int(C.shape[1]),
                    day=day.isoformat(), version=SWING_SCAN_VERSION)
         if res.get("as_of") != day.isoformat():

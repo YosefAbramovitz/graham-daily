@@ -61,7 +61,15 @@ BACKTEST = {
     "spy_cagr": 0.147, "spy_maxdd": -0.245,
     # תוחלת לעסקה ב-2021-25 לפי ציון האיכות
     "quality_r": {"0": -0.12, "1": -0.04, "2": 0.08, "3": 0.26},
+    # תוחלת לעסקה ב-2021-25: המניה ירדה לבד (הענף עלה ב-10 ימים) מול ירדה עם הענף
+    "alone_r": {"alone": 0.03, "with": 0.13},
 }
+
+# ענף (ideas_sim.py, ספטמבר 2026): אות על מניה שירדה בזמן שהענף שלה (GICS, משקל
+# שווה) עלה ב-10 הימים האחרונים הניב כמעט אפס: +0.003R / +0.030R (2016-20 / 2021-25),
+# מול +0.114R / +0.127R כשהענף ירד. כ-30% מהאותות. תיק שמסנן לפיו הניב פחות
+# ב-2016-20 (+9.9% מול +14.3%), ולכן זה מידע, לא כלל שמסנן.
+SECTOR_DAYS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -109,11 +117,27 @@ def quality(ind: Dict[str, pd.DataFrame]) -> pd.DataFrame:
     return a + b + c
 
 
+def sector_change(C: pd.DataFrame, sectors: Dict[str, str], days: int = SECTOR_DAYS,
+                  skip=("SPY",)) -> pd.DataFrame:
+    """לכל מניה: תשואת הענף שלה (ממוצע משקל שווה של המניות בטבלה) ב-days ימים. NaN בלי ענף."""
+    ret = C.pct_change(fill_method=None)
+    names = pd.Series({c: sectors.get(c) for c in C.columns
+                       if c not in skip and sectors.get(c)}, dtype=object)
+    out = pd.DataFrame(np.nan, index=C.index, columns=C.columns)
+    for _, members in names.groupby(names).groups.items():
+        m = list(members)
+        level = (1 + ret[m].mean(axis=1).fillna(0)).cumprod()
+        ch = level / level.shift(days) - 1
+        for c in m:
+            out[c] = ch
+    return out
+
+
 def market_ok(spy: pd.Series) -> pd.Series:
     return spy > spy.rolling(200, min_periods=200).mean()
 
 
-def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
+def scan(C, H, L, V, spy_symbol: str = "SPY", sectors: Optional[Dict[str, str]] = None) -> dict:
     """האותות ליום האחרון בטבלאות. C/H/L/V: שורה ליום, עמודה לסימול."""
     if C.empty:
         return {"as_of": None, "market_ok": None, "rows": []}
@@ -125,6 +149,7 @@ def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
         m = market_ok(C[spy_symbol].ffill())
         mk = bool(m.iloc[-1]) if not pd.isna(m.iloc[-1]) else None
     q = quality(ind)
+    sc = sector_change(C, sectors, skip=(spy_symbol,)) if sectors else None
     rows = []
     for t in C.columns:
         if t == spy_symbol or not bool(sig.at[last, t]):
@@ -132,6 +157,7 @@ def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
         c, a = float(C.at[last, t]), float(ind["atr"].at[last, t])
         if not (c > 0 and a > 0):
             continue
+        s10 = None if sc is None or pd.isna(sc.at[last, t]) else float(sc.at[last, t])
         rows.append({
             "ticker": t, "close": round(c, 2), "rsi": round(float(ind["rsi"].at[last, t]), 1),
             "atr": round(a, 4), "atr_pct": round(a / c * 100, 2),
@@ -146,6 +172,9 @@ def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
             "dist200": round(float(ind["dist200"].at[last, t]), 4),
             "dist50": round(float(ind["dist50"].at[last, t]), 4),
             "volratio": round(float(ind["volratio"].at[last, t]), 2),
+            "sector": (sectors or {}).get(t),
+            "sector10": round(s10, 4) if s10 is not None else None,
+            "alone": (s10 >= 0) if s10 is not None else None,
         })
     # בבדיקה לאחור, כשהיו יותר אותות ממקומות, נבחרו החזקות במומנטום חצי שנה
     rows.sort(key=lambda r: -(r["mom"] if r["mom"] is not None else -9))
