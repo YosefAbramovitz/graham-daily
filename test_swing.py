@@ -59,3 +59,16 @@ def test_scan_finds_pullback_in_uptrend():
     assert [x["ticker"] for x in r["rows"]] == ["AAA"]
     row = r["rows"][0]
     assert row["rsi"] < swing.RSI_MAX and row["stop_dist"] > 0
+
+
+def test_quality_score():
+    idx = pd.bdate_range("2024-01-01", periods=300)
+    C = pd.DataFrame({"AAA": np.linspace(20, 60, 300)}, index=idx)
+    V = pd.DataFrame(1_000_000.0, index=idx, columns=C.columns)
+    ind = swing.indicators(C, C * 1.01, C * 0.99, V)
+    q = swing.quality(ind)
+    # מגמה חזקה (מעל 200), אבל לא תיקון (מעל 50), מחזור רגיל = 2 מתוך 3
+    assert int(q.iloc[-1, 0]) == 2
+    V.iloc[-5:] = 3_000_000.0           # קפיצת מחזור בימים האחרונים
+    ind = swing.indicators(C, C * 1.01, C * 0.99, V)
+    assert int(swing.quality(ind).iloc[-1, 0]) == 1

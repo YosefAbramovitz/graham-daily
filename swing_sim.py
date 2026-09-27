@@ -228,8 +228,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache", default="variants_cache")
     ap.add_argument("--out", default="swing_results.json")
+    ap.add_argument("--extra", action="store_true", help="רק ניתוח איכות ודוחות לכלל שנבחר")
     a = ap.parse_args()
     d = Data(Path(a.cache))
+    if a.extra:
+        extra_report(d, Path(a.cache))
+        return 0
     ins = lambda t: t[d.idx[t.s] < SPLIT]
     oos = lambda t: t[d.idx[t.s] >= SPLIT]
 
@@ -278,6 +282,55 @@ def main() -> int:
     Path(a.out).write_text(json.dumps(res, ensure_ascii=False, indent=1, default=float),
                            encoding="utf-8")
     return 0
+
+
+
+# ---------------------------------------------------------------------------
+# ניתוחים נוספים: ציון איכות ודוחות (python swing_sim.py --extra)
+# ---------------------------------------------------------------------------
+
+def extra_report(d: Data, cache: Path) -> dict:
+    """תוחלת לעסקה של הכלל הנבחר, לפי ציון איכות ולפי קרבה לדוח רבעוני."""
+    import swing
+    b = pd.read_pickle(cache / "bars.pkl.gz")
+    f = lambda k: b[k].reindex(columns=d.cols).astype("float64")
+    C, H, L, V = f("close"), f("high"), f("low"), f("volume")
+    ind = swing.indicators(C, H, L, V)
+    d.sig = {"rule": swing.signals(C, H, L, V).to_numpy()}
+    t = all_trades(d, "rule", Exit(swing.STOP_ATR, None, swing.HOLD_DAYS), True)
+    q = swing.quality(ind).to_numpy()
+    t["quality"] = [q[s, k] for s, k in zip(t.s, t.k)]
+    t["oos"] = d.idx[t.s] >= SPLIT
+    out = {"quality": t.groupby(["quality", "oos"]).R.agg(["count", "mean"]).round(3)}
+
+    ef = cache / "earnings.json"
+    if ef.exists():
+        earn = json.loads(ef.read_text(encoding="utf-8"))
+        pos = {tk: np.searchsorted(d.idx.values, pd.to_datetime(v).values) for tk, v in earn.items() if v}
+        def flag(s, k, lo, hi):
+            p = pos.get(d.cols[k])
+            if p is None:
+                return None
+            return bool(((p >= s + lo) & (p <= s + hi)).any())
+        # בתוך תקופת ההחזקה המתוכננת: מיום הכניסה (s+1) עד היום ה-15
+        t["earn_in_hold"] = [flag(s, k, 1, swing.HOLD_DAYS) for s, k in zip(t.s, t.k)]
+        # דוח ב-5 הימים שלפני האות (הירידה היא תגובה לדוח)
+        t["earn_before"] = [flag(s, k, -5, 0) for s, k in zip(t.s, t.k)]
+        for col in ("earn_in_hold", "earn_before"):
+            g = t[t[col].notna()]
+            out[col] = g.groupby([col, "oos"]).R.agg(["count", "mean"]).round(3)
+            a, b_ = g[g[col] == True].R, g[g[col] == False].R  # noqa: E712
+            out[col + "_t"] = round(float((a.mean() - b_.mean()) /
+                                          math.sqrt(a.var() / len(a) + b_.var() / len(b_))), 2)
+        g = t[t.earn_in_hold.notna()]
+        for lab, sub in (("בלי דוח בתקופה", g[g.earn_in_hold == False]),  # noqa: E712
+                         ("הכול", g)):
+            e = portfolio(d, sub, rank="mom")
+            out["portfolio " + lab] = [round(x, 3) for x in
+                                        pstats(e[e.index < SPLIT]) + pstats(e[e.index >= SPLIT])]
+    for k, v in out.items():
+        print(f"\n== {k}\n{v}")
+    return out
 
 
 if __name__ == "__main__":

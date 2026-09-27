@@ -39,11 +39,24 @@ MIN_DOLLAR_VOL = 20e6
 HISTORY_DAYS = 420          # ימים קלנדריים: מספיק לממוצע 200 ולחימום ה-RSI
 ORDER_PREFIX = "swing-"     # client_order_id של קניות סווינג, כדי לזהות אותן אחר כך
 
+# ציון איכות 0-3 לכל אות (הספים נקבעו על 2016-2020 בלבד, swing_sim.py --quality):
+#   A. מגמה חזקה: המחיר לפחות 3.6% מעל ממוצע 200
+#   B. תיקון עמוק: המחיר לפחות 4.7% מתחת לממוצע 50
+#   C. מחזור נמוך בירידה: ממוצע מחזור 5 ימים עד פי 1.26 מממוצע 50 יום
+# תוחלת לעסקה לפי ציון (2016-20 / 2021-25): 0-1: -0.07R/-0.04R, 2: +0.14R/+0.08R,
+# 3: +0.30R/+0.26R. בתיק (1% סיכון, 10 מקומות) העדפת ציון 3 לא שיפרה את התשואה
+# (+12.6% מול +15.4% ב-2021-25), ולכן זה מידע לבחירה ולא כלל שמסנן.
+Q_DIST200_MIN = 0.036
+Q_DIST50_MAX = -0.047
+Q_VOLRATIO_MAX = 1.26
+
 # מה הבדיקה לאחור הראתה, להצגה במסך (swing_results.json)
 BACKTEST = {
     "period": "2021-2025", "trades": 5631, "win": 0.44, "exp_r": 0.10,
     "avg_ret": 0.005, "days": 10.7, "cagr": 0.154, "maxdd": -0.224,
     "spy_cagr": 0.147, "spy_maxdd": -0.245,
+    # תוחלת לעסקה ב-2021-25 לפי ציון האיכות
+    "quality_r": {"0": -0.12, "1": -0.04, "2": 0.08, "3": 0.26},
 }
 
 
@@ -69,6 +82,8 @@ def indicators(C, H, L, V) -> Dict[str, pd.DataFrame]:
     sma = lambda x, n: x.rolling(n, min_periods=n).mean()
     s50, s200 = sma(C, 50), sma(C, 200)
     return {
+        "dist200": C / s200 - 1, "dist50": C / s50 - 1,
+        "volratio": sma(V, 5) / sma(V, 50),
         "sma50": s50, "sma200": s200, "rsi": rsi(C), "atr": atr(H, L, C),
         "dv20": sma(C * V, 20), "mom": C / C.shift(126) - 1,
         "uptrend": (C > s200) & (s50 > s200),
@@ -80,6 +95,14 @@ def signals(C, H, L, V) -> pd.DataFrame:
     """טבלת אותות לכל יום ולכל מניה (True = אות בסגירה של אותו יום)."""
     ind = indicators(C, H, L, V)
     return (ind["liquid"] & ind["uptrend"] & (ind["rsi"] < RSI_MAX)).fillna(False)
+
+
+def quality(ind: Dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """ציון 0-3: מגמה חזקה + תיקון עמוק + מחזור נמוך."""
+    a = (ind["dist200"] >= Q_DIST200_MIN).astype(int)
+    b = (ind["dist50"] <= Q_DIST50_MAX).astype(int)
+    c = (ind["volratio"] <= Q_VOLRATIO_MAX).astype(int)
+    return a + b + c
 
 
 def market_ok(spy: pd.Series) -> pd.Series:
@@ -97,6 +120,7 @@ def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
     if spy_symbol in C.columns:
         m = market_ok(C[spy_symbol].ffill())
         mk = bool(m.iloc[-1]) if not pd.isna(m.iloc[-1]) else None
+    q = quality(ind)
     rows = []
     for t in C.columns:
         if t == spy_symbol or not bool(sig.at[last, t]):
@@ -111,6 +135,13 @@ def scan(C, H, L, V, spy_symbol: str = "SPY") -> dict:
             "mom": round(float(ind["mom"].at[last, t]), 4) if not pd.isna(ind["mom"].at[last, t]) else None,
             "dv20": round(float(ind["dv20"].at[last, t])),
             "sma50": round(float(ind["sma50"].at[last, t]), 2),
+            "quality": int(q.at[last, t]),
+            "q_trend": bool(ind["dist200"].at[last, t] >= Q_DIST200_MIN),
+            "q_pullback": bool(ind["dist50"].at[last, t] <= Q_DIST50_MAX),
+            "q_volume": bool(ind["volratio"].at[last, t] <= Q_VOLRATIO_MAX),
+            "dist200": round(float(ind["dist200"].at[last, t]), 4),
+            "dist50": round(float(ind["dist50"].at[last, t]), 4),
+            "volratio": round(float(ind["volratio"].at[last, t]), 2),
         })
     # בבדיקה לאחור, כשהיו יותר אותות ממקומות, נבחרו החזקות במומנטום חצי שנה
     rows.sort(key=lambda r: -(r["mom"] if r["mom"] is not None else -9))

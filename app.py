@@ -1203,6 +1203,7 @@ def api_live():
 # ---------------------------------------------------------------------------
 
 SWING_CACHE = HERE / "swing_cache.json"
+SWING_SCAN_VERSION = 2      # להעלות כשמבנה הסריקה משתנה, כדי שסריקה ישנה תחושב מחדש
 _swing = {"data": None, "running": False, "error": None, "universe": None, "uday": None}
 _swing_lock = threading.Lock()
 _swing_orders = {"at": 0.0, "map": {}}
@@ -1297,7 +1298,7 @@ def _swing_run(day: date) -> None:
         C, H, L, V = _swing_frames(bars, day)
         res = swing.scan(C, H, L, V)
         res.update(computed_at=now_iso(), universe=len(syms) - 1, priced=int(C.shape[1]),
-                   day=day.isoformat())
+                   day=day.isoformat(), version=SWING_SCAN_VERSION)
         if res.get("as_of") != day.isoformat():
             res["warning"] = f"הנתונים האחרונים מ-{res.get('as_of')}, לא מ-{day.isoformat()}"
         _swing.update(data=res, error=None)
@@ -1319,7 +1320,8 @@ def swing_state() -> dict:
         except (OSError, ValueError):
             pass
     day = last_closed_day()
-    fresh = (_swing["data"] or {}).get("day") == day.isoformat()
+    fresh = ((_swing["data"] or {}).get("day") == day.isoformat()
+             and (_swing["data"] or {}).get("version") == SWING_SCAN_VERSION)
     with _swing_lock:
         if not fresh and not _swing["running"] and creds():
             _swing.update(running=True, error=None)
