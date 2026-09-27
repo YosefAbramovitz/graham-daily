@@ -215,7 +215,7 @@ const ORDER_STATUS = {new:"ממתינה", accepted:"ממתינה", pending_new:"
 
 function pendingTable(rows){
   if (!rows.length) return `<div class="empty">אין קניות פתוחות. כל מה שנשלח כבר בוצע, בוטל או פקע.</div>`;
-  return `<div class="card"><table><thead><tr><th>סימול</th><th>מצב</th><th>כמות</th><th>בוצע</th>
+  return `<div class="card"><table id="pending"><thead><tr><th>סימול</th><th>מצב</th><th>כמות</th><th>בוצע</th>
       <th>מחיר לימיט</th><th>יעד</th><th>סטופ</th><th>תוקף</th><th>נשלחה</th><th></th></tr></thead><tbody>
     ${rows.map(o => `<tr><td><b>${esc(o.ticker)}</b></td>
       <td><span class="pill ${o.status === "partially_filled" ? "ok" : "warn"}">${esc(ORDER_STATUS[o.status] || o.status)}</span></td>
@@ -325,5 +325,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) load
 setInterval(tick, 1000);
 load();
 </script>
+<script src="/tabletools.js"></script>
 </body>
 </html>

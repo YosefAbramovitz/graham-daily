@@ -621,6 +621,17 @@ def _fmt_money(value):
         return "—"
 
 
+
+def with_table_tools(page: str) -> str:
+    """משבץ את tabletools.js (שינוי רוחב עמודות) בדף, כדי שיישאר קובץ אחד."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tabletools.js")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            js = fh.read()
+    except OSError:
+        return page
+    return page.replace("</body>", "<script>\n" + js + "\n</script>\n</body>", 1)
+
 def positions_section(path: str) -> str:
     """טבלת הפוזיציות הפתוחות. בלי פוזיציות — אין מקטע בכלל."""
     if not os.path.exists(path):
@@ -737,6 +748,7 @@ def main():
             .replace("__UPDATED__", updated)
             .replace("__COUNT__", str(total))
             .replace("__POSITIONS__", positions_section(args.positions)))
+    page = with_table_tools(page)
 
     os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:

@@ -403,7 +403,8 @@ function exitCell(r){
   else pill = `<span class="pill">לא ידוע</span>`;
   const btn = (st === "none" || st === "expiring")
     ? ` <button class="btn" onclick="askRenew('${esc(r.ticker)}')">חדש</button>` : "";
-  return `<td>${pill}${btn}</td>`;
+  const ord = st === "none" ? -1 : st === "unknown" ? "" : (d ?? 9999);
+  return `<td data-sort="${ord}">${pill}${btn}</td>`;
 }
 
 const ORDER_STATUS = {
@@ -522,7 +523,7 @@ async function loadWatch(){
             title="פתח את ${esc(r.ticker)} ב-Alpaca">${esc(r.ticker)}</a></td>
         <td><div class="nm">${logo(r)}<div>${esc(r.name)}<span class="sm">${esc(r.sector)}</span></div></div></td>
         <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span></td>
-        <td class="num"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
+        <td class="num" data-sort="${r.last ?? ""}"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
         <td class="num">${r.atr_pct ? r.atr_pct.toFixed(1)+"%" : "—"}</td>
         <td class="num">${r.quality_score ?? "—"}</td>
       </tr>
@@ -906,5 +907,6 @@ setInterval(() => refresh(), 30000);
 let WATCH_TICK = 0;
 setInterval(() => { WATCH_TICK++; if (MARKET_OPEN || WATCH_TICK % 5 === 0) loadWatch(); }, 120000);
 </script>
+<script src="/tabletools.js"></script>
 </body>
 </html>

@@ -1098,6 +1098,11 @@ def live_row(p: dict, quote: Optional[dict], ent: Optional[date], from_csv: bool
     }
 
 
+@app.get("/tabletools.js")
+def tabletools_js():
+    return send_from_directory(HERE, "tabletools.js", mimetype="text/javascript", max_age=300)
+
+
 @app.get("/positions")
 def positions_page():
     return send_from_directory(HERE, "positions_ui.html")

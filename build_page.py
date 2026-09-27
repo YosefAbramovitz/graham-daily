@@ -156,6 +156,17 @@ def _tri(val):
     return bool(val)
 
 
+
+def with_table_tools(page: str) -> str:
+    """משבץ את tabletools.js (שינוי רוחב עמודות) בדף, כדי שיישאר קובץ אחד."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tabletools.js")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            js = fh.read()
+    except OSError:
+        return page
+    return page.replace("</body>", "<script>\n" + js + "\n</script>\n</body>", 1)
+
 def build_rows(df, criteria, score_col, max_col):
     rows = []
     for _, r in df.iterrows():
@@ -535,6 +546,7 @@ def main():
         .replace("__STATS__", stats_html)
         .replace("__CRITERIA_LIST__", criteria_html)
     )
+    page = with_table_tools(page)
 
     out_dir = os.path.dirname(os.path.abspath(args.out))
     os.makedirs(out_dir, exist_ok=True)
