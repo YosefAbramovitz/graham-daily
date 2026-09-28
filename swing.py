@@ -25,7 +25,14 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 import numpy as np
-import pandas as pd
+
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover
+    # במחשב שבו Windows חוסם את pandas (Smart App Control) מסך המסחר עדיין
+    # צריך לעלות: הגודל, התאריכים וההזמנות לא צריכים את pandas. רק הסריקה
+    # היומית נכשלת, ועד אז משתמשים באותות השמורים.
+    pd = None
 
 RSI_N = 14
 RSI_MAX = 35.0
