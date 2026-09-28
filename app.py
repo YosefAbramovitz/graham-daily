@@ -1979,6 +1979,7 @@ def tg_offer(kind: str, quiet: bool = False) -> None:
     selected = {p["ticker"] for p in rows}
     msg = tg_call("sendMessage", chat_id=chat, text=tg_plan_text(kind, res, selected),
                   reply_markup=tg_keyboard(tok, rows, selected))
+    print(f"טלגרם: תוכנית {kind} ({len(rows)}) {'נשלחה' if msg else 'לא נשלחה'}", flush=True)
     if msg:
         with _tg_lock:
             _tg["pending"][tok] = {"kind": kind, "res": res, "selected": selected,
@@ -2066,17 +2067,20 @@ def tg_loop() -> None:
         ups = tg_call("getUpdates", offset=_tg["offset"], timeout=50,
                       allowed_updates=["message", "callback_query"])
         if ups is None:
+            print("טלגרם: getUpdates נכשל, מנסה שוב", flush=True)
             time.sleep(10)
             continue
         for u in ups:
             _tg["offset"] = u["update_id"] + 1
             try:
                 if "callback_query" in u:
+                    print(f"טלגרם: לחיצה {str(u['callback_query'].get('data', ''))[:3]}", flush=True)
                     tg_handle_callback(u["callback_query"])
                 elif "message" in u:
+                    print(f"טלגרם: פקודה {str(u['message'].get('text', ''))[:20]}", flush=True)
                     tg_handle_message(u["message"])
-            except Exception:  # noqa: BLE001 - עדכון אחד שנכשל לא עוצר את המאזין
-                pass
+            except Exception as exc:  # noqa: BLE001 - עדכון אחד שנכשל לא עוצר את המאזין
+                print(f"טלגרם: שגיאה בטיפול בעדכון ({type(exc).__name__}: {exc})", flush=True)
 
 
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
