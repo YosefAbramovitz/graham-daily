@@ -1679,6 +1679,9 @@ def graham_plan() -> dict:
             "reason": None if plan else "התיק מלא (15) או שאין מזומן"}
 
 
+PLAN_KINDS = ("swing", "graham", "spy")
+
+
 def _wrong_acct(kind: str):
     """כל תוכנית שייכת לחשבון שלה, אם הוא מוגדר - שלא ייקנה סווינג בחשבון גראהם."""
     if kind in accounts_available() and current_acct() != kind:
@@ -1687,45 +1690,31 @@ def _wrong_acct(kind: str):
     return None
 
 
-@app.get("/api/plan/<kind>")
-def api_plan(kind: str):
-    bad = _wrong_acct(kind)
-    if bad:
-        return jsonify({"plan": [], "reason": bad})
+def plan_for(kind: str) -> Optional[dict]:
+    """התוכנית של סוג מסוים בחשבון הנוכחי. None לסוג לא מוכר."""
     if kind == "swing":
-        return jsonify(swing_plan())
+        return swing_plan()
     if kind == "graham":
-        return jsonify(graham_plan())
+        return graham_plan()
     if kind == "spy":
         b = _book()
         px = last_trade("SPY")
         if not b or not px:
-            return jsonify({"plan": [], "reason": "לא הצלחתי לקרוא חשבון או מחיר"})
+            return {"plan": [], "reason": "לא הצלחתי לקרוא חשבון או מחיר"}
         p = plans.plan_spy(b["cash"], px)
-        return jsonify({"plan": [p] if p["qty"] else [], "cash": b["cash"],
-                        "reason": None if p["qty"] else "אין מזומן"})
-    return jsonify({"error": "סוג לא מוכר"}), 404
+        return {"plan": [p] if p["qty"] else [], "cash": b["cash"],
+                "reason": None if p["qty"] else "אין מזומן"}
+    return None
 
 
-@app.post("/api/plan/<kind>/buy")
-def api_plan_buy(kind: str):
-    """שולח את התוכנית שהמשתמש ראה ואישר (רק הסימולים שאושרו, מחושבים מחדש)."""
-    body = request.get_json(silent=True) or {}
-    if body.get("confirm") != "BUY":
-        return jsonify({"error": "חסר אישור"}), 400
-    want = {str(t).upper() for t in body.get("tickers") or []}
-    bad = _wrong_acct(kind)
-    if bad:
-        return jsonify({"error": bad}), 400
-    if kind == "swing":
-        plan = [p for p in swing_plan()["plan"] if p["ticker"] in want]
-    elif kind == "graham":
-        plan = [p for p in graham_plan()["plan"] if p["ticker"] in want]
-    elif kind == "spy":
+def execute_plan(kind: str, want) -> list:
+    """שולח את הפקודות של התוכנית - רק הסימולים שאושרו, מחושבים מחדש עכשיו."""
+    want = {str(t).upper() for t in want or []}
+    if kind == "spy":
         b, px = _book(), last_trade("SPY")
         plan = [plans.plan_spy(b["cash"], px)] if b and px and "SPY" in want else []
     else:
-        return jsonify({"error": "סוג לא מוכר"}), 404
+        plan = [p for p in (plan_for(kind) or {}).get("plan", []) if p["ticker"] in want]
     out = []
     for p in plan:
         if kind == "swing":
@@ -1743,7 +1732,32 @@ def api_plan_buy(kind: str):
                     "status": data.get("status") if ok else None,
                     "error": None if ok else data.get("error")})
         time.sleep(0.2)
-    return jsonify({"rows": out, "acct": current_acct()})
+    return out
+
+
+@app.get("/api/plan/<kind>")
+def api_plan(kind: str):
+    bad = _wrong_acct(kind)
+    if bad:
+        return jsonify({"plan": [], "reason": bad})
+    res = plan_for(kind)
+    if res is None:
+        return jsonify({"error": "סוג לא מוכר"}), 404
+    return jsonify(res)
+
+
+@app.post("/api/plan/<kind>/buy")
+def api_plan_buy(kind: str):
+    """שולח את התוכנית שהמשתמש ראה ואישר (רק הסימולים שאושרו, מחושבים מחדש)."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "BUY":
+        return jsonify({"error": "חסר אישור"}), 400
+    bad = _wrong_acct(kind)
+    if bad:
+        return jsonify({"error": bad}), 400
+    if kind not in PLAN_KINDS:
+        return jsonify({"error": "סוג לא מוכר"}), 404
+    return jsonify({"rows": execute_plan(kind, body.get("tickers")), "acct": current_acct()})
 
 
 # ---------------------------------------------------------------------------
@@ -1795,6 +1809,8 @@ def remind_tick() -> None:
         lines.append("גראהם: שבוע ראשון בחודש - 'קנייה חודשית' בחשבון גראהם.")
     if lines:
         telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
+    for kind in PLAN_KINDS:               # תוכניות לאישור (רק אם יש מה לקנות)
+        tg_offer(kind, quiet=True)
 
 
 def remind_loop() -> None:
@@ -1881,6 +1897,186 @@ def telegram_send(text: str) -> bool:
         return bool(r.ok and r.json().get("ok"))
     except (requests.RequestException, ValueError):
         return False
+
+
+# ---------------------------------------------------------------------------
+# אישור קנייה בטלגרם: כל תוכנית (סווינג / גראהם / S&P) נשלחת כהודעה עם כפתור
+# לכל מניה (להוריד מהקנייה) וכפתור "אשר". שום פקודה לא נשלחת בלי לחיצה על
+# "אשר" בצ'אט המוגדר. התוכנית מחושבת מחדש ברגע האישור (כמו בכפתור שבמסך).
+# ---------------------------------------------------------------------------
+
+PLAN_LABEL = {"swing": "סווינג", "graham": "גראהם", "spy": "S&P 500"}
+TG_TTL = 6 * 3600          # אחרי זה ההודעה פגה ונדרשת /plan חדשה
+_tg = {"pending": {}, "offset": None, "busy": set()}
+_tg_lock = threading.Lock()
+
+
+def tg_call(method: str, **payload):
+    """קריאה ל-Bot API. מחזיר את result או None. לא זורק שגיאות."""
+    load_env()
+    bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not bot:
+        return None
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{bot}/{method}", json=payload,
+                          timeout=payload.get("timeout", 0) + 15)
+        j = r.json()
+        return j.get("result") if j.get("ok") else None
+    except (requests.RequestException, ValueError):
+        return None
+
+
+def tg_plan_text(kind: str, res: dict, selected=None) -> str:
+    rows = res.get("plan") or []
+    lines = [f"קנייה לאישור - {PLAN_LABEL[kind]} (חשבון paper)"]
+    total = 0.0
+    for p in rows:
+        on = selected is None or p["ticker"] in selected
+        mark = "✅" if on else "⬜"
+        if kind == "swing":
+            extra = f"סטופ {p['stop']} | סיכון ${p['risk']}"
+        elif kind == "graham":
+            extra = f"לימיט {p['price']} | יעד {p['target']}"
+        else:
+            extra = "מרקט"
+        lines.append(f"{mark} {p['ticker']}: {p['qty']} × {p['price']} = ${p['value']:,.0f} ({extra})")
+        if on:
+            total += p["value"]
+    lines.append(f"\nסה\"כ לאישור: ${total:,.0f}")
+    if res.get("cash") is not None:
+        lines.append(f"מזומן בחשבון: ${res['cash']:,.0f}")
+    lines.append("לחיצה על מניה מורידה או מחזירה אותה. המחירים יחושבו מחדש ברגע האישור.")
+    return "\n".join(lines)
+
+
+def tg_keyboard(tok: str, rows: list, selected: set) -> dict:
+    btns = [{"text": ("✅ " if p["ticker"] in selected else "⬜ ") + p["ticker"],
+             "callback_data": f"t|{tok}|{p['ticker']}"} for p in rows]
+    grid = [btns[i:i + 3] for i in range(0, len(btns), 3)]
+    grid.append([{"text": f"אשר קנייה ({len(selected)})", "callback_data": f"ok|{tok}"},
+                 {"text": "בטל", "callback_data": f"no|{tok}"}])
+    return {"inline_keyboard": grid}
+
+
+def tg_offer(kind: str, quiet: bool = False) -> None:
+    """שולח את התוכנית לאישור. quiet=True: לא שולח כלום אם אין מה לקנות."""
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat:
+        return
+    if kind not in accounts_available():
+        if not quiet:
+            tg_call("sendMessage", chat_id=chat, text=f"{PLAN_LABEL[kind]}: החשבון לא מוגדר ב-.env")
+        return
+    with using(kind):
+        res = plan_for(kind) or {}
+    rows = res.get("plan") or []
+    if not rows:
+        if not quiet:
+            tg_call("sendMessage", chat_id=chat,
+                    text=f"{PLAN_LABEL[kind]}: אין מה לקנות - {res.get('reason') or 'התוכנית ריקה'}")
+        return
+    tok = secrets.token_hex(4)
+    selected = {p["ticker"] for p in rows}
+    msg = tg_call("sendMessage", chat_id=chat, text=tg_plan_text(kind, res, selected),
+                  reply_markup=tg_keyboard(tok, rows, selected))
+    if msg:
+        with _tg_lock:
+            _tg["pending"][tok] = {"kind": kind, "res": res, "selected": selected,
+                                   "msg": msg["message_id"], "at": time.time()}
+
+
+def tg_result_text(kind: str, out: list) -> str:
+    if not out:
+        return f"{PLAN_LABEL[kind]}: לא נשלחה אף פקודה (אולי המחיר, המזומן או התיק השתנו)."
+    lines = [f"{PLAN_LABEL[kind]} - נשלח:"]
+    for r in out:
+        lines.append(("✅ " if r["ok"] else "❌ ") + f"{r['ticker']} {r['qty']}"
+                     + (f" ({r['status']})" if r["ok"] else f" - {r['error']}"))
+    return "\n".join(lines)
+
+
+def tg_handle_callback(cq: dict) -> None:
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    frm = str((cq.get("from") or {}).get("id", ""))
+    if not chat or frm != chat:
+        tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="לא מורשה")
+        return
+    parts = str(cq.get("data") or "").split("|")
+    tok = parts[1] if len(parts) > 1 else ""
+    with _tg_lock:
+        st = _tg["pending"].get(tok)
+        if st and time.time() - st["at"] > TG_TTL:
+            _tg["pending"].pop(tok, None)
+            st = None
+        if st and parts[0] == "t" and len(parts) == 3:
+            st["selected"] ^= {parts[2]}
+        elif st and parts[0] in ("ok", "no"):
+            _tg["pending"].pop(tok, None)     # לחיצה כפולה לא שולחת פעמיים
+    if not st:
+        tg_call("answerCallbackQuery", callback_query_id=cq["id"],
+                text="פג תוקף. שלח /plan לתוכנית חדשה", show_alert=True)
+        return
+    kind = st["kind"]
+    if parts[0] == "t":
+        tg_call("answerCallbackQuery", callback_query_id=cq["id"])
+        tg_call("editMessageText", chat_id=chat, message_id=st["msg"],
+                text=tg_plan_text(kind, st["res"], st["selected"]),
+                reply_markup=tg_keyboard(tok, st["res"]["plan"], st["selected"]))
+        return
+    if parts[0] == "no":
+        tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="בוטל")
+        tg_call("editMessageText", chat_id=chat, message_id=st["msg"],
+                text=f"{PLAN_LABEL[kind]}: בוטל, לא נשלחו פקודות.")
+        return
+    tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="שולח...")
+    if not st["selected"]:
+        out = []
+    else:
+        with using(kind):
+            out = execute_plan(kind, st["selected"])
+    tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=tg_result_text(kind, out))
+
+
+TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham, /spy - תוכנית אחת.\n"
+           "כל תוכנית נשלחת רק אחרי לחיצה על 'אשר קנייה'.")
+
+
+def tg_handle_message(msg: dict) -> None:
+    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if not chat or str((msg.get("chat") or {}).get("id", "")) != chat:
+        return
+    cmd = str(msg.get("text") or "").strip().split("@")[0].lower()
+    kinds = {"/plan": list(PLAN_KINDS), "/swing": ["swing"], "/graham": ["graham"],
+             "/spy": ["spy"]}.get(cmd)
+    if kinds is None:
+        if cmd.startswith("/"):
+            tg_call("sendMessage", chat_id=chat, text=TG_HELP)
+        return
+    for k in kinds:
+        tg_offer(k)
+
+
+def tg_loop() -> None:
+    """מאזין לכפתורים ולפקודות (long polling). רק מופע אחד של השרת צריך לרוץ."""
+    # מדלגים על מה שנלחץ לפני שהשרת עלה: אחרי הפעלה מחדש אין תוכניות ממתינות
+    old = tg_call("getUpdates", offset=-1, timeout=0) or []
+    if old:
+        _tg["offset"] = old[-1]["update_id"] + 1
+    while True:
+        ups = tg_call("getUpdates", offset=_tg["offset"], timeout=50,
+                      allowed_updates=["message", "callback_query"])
+        if ups is None:
+            time.sleep(10)
+            continue
+        for u in ups:
+            _tg["offset"] = u["update_id"] + 1
+            try:
+                if "callback_query" in u:
+                    tg_handle_callback(u["callback_query"])
+                elif "message" in u:
+                    tg_handle_message(u["message"])
+            except Exception:  # noqa: BLE001 - עדכון אחד שנכשל לא עוצר את המאזין
+                pass
 
 
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
@@ -2013,6 +2209,9 @@ def main() -> int:
     if REMOTE:
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
     threading.Thread(target=remind_loop, daemon=True).start()
+    if os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
+        threading.Thread(target=tg_loop, daemon=True).start()
+        print("טלגרם: אישור קניות פעיל (/plan בבוט).")
     print("לעצירה: Ctrl+C\n")
     # בלי --lan/--public: ‏127.0.0.1 בלבד. עם --lan: כל הממשקים, אבל guard() מקבל
     # רק את המחשב והרשת הפנימית, ודורש טוקן או מכשיר מאושר מהרשת. עם --public:
