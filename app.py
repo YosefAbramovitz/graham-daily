@@ -1591,23 +1591,19 @@ def api_swing_order():
     return jsonify({"id": data.get("id"), "status": data.get("status"), "qty": qty})
 
 
-@app.post("/api/swing/close")
-def api_swing_close():
-    """יציאה מפוזיציית סווינג במחיר השוק: ביטול הסטופ, ואז סגירת הפוזיציה."""
-    body = request.get_json(silent=True) or {}
-    if body.get("confirm") != "SELL":
-        return jsonify({"error": "חסר אישור"}), 400
-    sym = str(body.get("ticker") or "").strip().upper()
+def swing_close(sym: str):
+    """יציאה מפוזיציית סווינג במחיר השוק בחשבון הנוכחי. מחזיר (ok, payload)."""
+    sym = str(sym or "").strip().upper()
     if sym not in swing_map(force=True):
-        return jsonify({"error": f"{sym} אינה פוזיציית סווינג"}), 400
+        return False, {"error": f"{sym} אינה פוזיציית סווינג"}
     ok, orders = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
     if not ok:
-        return jsonify(orders), 502
+        return False, orders
     ids = [o["id"] for o in flatten_orders(orders) if o.get("symbol") == sym and o.get("id")]
     for oid in ids:
         ok, err = api("DELETE", f"{base()}/v2/orders/{oid}")
         if not ok:
-            return jsonify({"error": f"ביטול הסטופ נכשל, לא נמכר. {err.get('error', '')}"}), 502
+            return False, {"error": f"ביטול הסטופ נכשל, לא נמכר. {err.get('error', '')}"}
     for _ in range(15):
         ok, left = api("GET", f"{base()}/v2/orders", params={"status": "open", "limit": 500})
         if ok and not any(o.get("id") in ids for o in flatten_orders(left)):
@@ -1617,8 +1613,20 @@ def api_swing_close():
     if not ok:
         data["error"] = ("הסטופ בוטל אבל המכירה נדחתה, והפוזיציה כרגע בלי סטופ. "
                          + str(data.get("error", "")))
-        return jsonify(data), 502
-    return jsonify({"id": data.get("id"), "status": data.get("status"), "cancelled": len(ids)})
+        return False, data
+    return True, {"id": data.get("id"), "status": data.get("status"), "cancelled": len(ids)}
+
+
+@app.post("/api/swing/close")
+def api_swing_close():
+    """יציאה מפוזיציית סווינג במחיר השוק: ביטול הסטופ, ואז סגירת הפוזיציה."""
+    body = request.get_json(silent=True) or {}
+    if body.get("confirm") != "SELL":
+        return jsonify({"error": "חסר אישור"}), 400
+    ok, data = swing_close(body.get("ticker"))
+    if ok:
+        return jsonify(data)
+    return jsonify(data), (400 if "אינה פוזיציית סווינג" in str(data.get("error", "")) else 502)
 
 
 # ---------------------------------------------------------------------------
@@ -1768,11 +1776,21 @@ def api_plan_buy(kind: str):
 REMIND_FILE = HERE / "reminders.json"
 
 
-def remind_tick() -> None:
+def _remind_state() -> dict:
     try:
-        last = json.loads(REMIND_FILE.read_text(encoding="utf-8")).get("day")
+        d = json.loads(REMIND_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
-        last = None
+        return {}
+
+
+def _remind_save(d: dict) -> None:
+    REMIND_FILE.write_text(json.dumps(d), encoding="utf-8")
+
+
+def remind_tick() -> None:
+    state = _remind_state()
+    last = state.get("day")
     if not accounts_available():
         return
     ok, clock = api("GET", f"{base()}/v2/clock")
@@ -1781,8 +1799,10 @@ def remind_tick() -> None:
     day = str(clock.get("timestamp", ""))[:10]
     if day == last:
         return
-    REMIND_FILE.write_text(json.dumps({"day": day}), encoding="utf-8")
+    state["day"] = day
+    _remind_save(state)
     lines = []
+    due = []
     st = swing_state()
     for _ in range(30):
         if not _swing["running"]:
@@ -1804,21 +1824,24 @@ def remind_tick() -> None:
         due = [s for s, d in smap.items() if ok_p and s in {p["symbol"] for p in pos}
                and swing.exit_date(d) <= today]
         if due:
-            lines.append("סווינג - יום 15, למכור היום (\"מכור עכשיו\"): " + ", ".join(sorted(due)))
+            lines.append("סווינג - יום 15, למכור היום: " + ", ".join(sorted(due))
+                         + " (כפתור מכירה בהודעה נפרדת)")
     if day[8:10] <= "07" and "graham" in accounts_available():
         lines.append("גראהם: שבוע ראשון בחודש - 'קנייה חודשית' בחשבון גראהם.")
     if lines:
         telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
-    for kind in PLAN_KINDS:               # תוכניות לאישור (רק אם יש מה לקנות)
-        tg_offer(kind, quiet=True)
+    if "swing" in accounts_available() and due:
+        tg_offer_sell(due)
+    tg_offer(list(PLAN_KINDS), quiet=True)   # הודעה אחת עם כל התוכניות לאישור
 
 
 def remind_loop() -> None:
     while True:
-        try:
-            remind_tick()
-        except Exception:  # noqa: BLE001 - תזכורת שנכשלה לא מפילה את השרת
-            pass
+        for tick in (remind_tick, summary_tick):
+            try:
+                tick()
+            except Exception as exc:  # noqa: BLE001 - תזכורת שנכשלה לא מפילה את השרת
+                print(f"תזכורת: {tick.__name__} נכשלה ({type(exc).__name__}: {exc})", flush=True)
         time.sleep(300)
 
 
@@ -1900,15 +1923,22 @@ def telegram_send(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# אישור קנייה בטלגרם: כל תוכנית (סווינג / גראהם / S&P) נשלחת כהודעה עם כפתור
-# לכל מניה (להוריד מהקנייה) וכפתור "אשר". שום פקודה לא נשלחת בלי לחיצה על
-# "אשר" בצ'אט המוגדר. התוכנית מחושבת מחדש ברגע האישור (כמו בכפתור שבמסך).
+# אישור בטלגרם. כל יום עם פתיחת השוק: הודעה אחת עם כל התוכניות (סווינג /
+# גראהם / S&P), כפתור לכל מניה (להוריד/להחזיר) וכפתור "אשר הכל"; פוזיציות
+# סווינג ביום ה-15 עם כפתור "מכור"; ואחרי הסגירה סיכום יומי. שום פקודה לא
+# נשלחת בלי לחיצה על אישור בצ'אט המוגדר. הקנייה מחושבת מחדש ברגע האישור.
 # ---------------------------------------------------------------------------
 
 PLAN_LABEL = {"swing": "סווינג", "graham": "גראהם", "spy": "S&P 500"}
+KIND_CODE = {"swing": "s", "graham": "g", "spy": "p"}
+CODE_KIND = {v: k for k, v in KIND_CODE.items()}
 TG_TTL = 6 * 3600          # אחרי זה ההודעה פגה ונדרשת /plan חדשה
-_tg = {"pending": {}, "offset": None, "busy": set()}
+_tg = {"pending": {}, "offset": None}
 _tg_lock = threading.Lock()
+
+
+def tg_chat() -> str:
+    return os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 
 
 def tg_call(method: str, **payload):
@@ -1926,64 +1956,109 @@ def tg_call(method: str, **payload):
         return None
 
 
-def tg_plan_text(kind: str, res: dict, selected=None) -> str:
-    rows = res.get("plan") or []
-    lines = [f"קנייה לאישור - {PLAN_LABEL[kind]} (חשבון paper)"]
+def _plan_line(kind: str, p: dict, on: bool) -> str:
+    if kind == "swing":
+        extra = f"סטופ {p['stop']}"
+    elif kind == "graham":
+        extra = f"לימיט {p['price']}, יעד {p['target']}"
+    else:
+        extra = "מרקט"
+    return f"{'✅' if on else '⬜'} {p['ticker']}: {p['qty']} × {p['price']} = ${p['value']:,.0f} ({extra})"
+
+
+def tg_plan_text(st: dict) -> str:
+    lines = ["קניות לאישור (חשבונות paper)"]
     total = 0.0
-    for p in rows:
-        on = selected is None or p["ticker"] in selected
-        mark = "✅" if on else "⬜"
-        if kind == "swing":
-            extra = f"סטופ {p['stop']} | סיכון ${p['risk']}"
-        elif kind == "graham":
-            extra = f"לימיט {p['price']} | יעד {p['target']}"
-        else:
-            extra = "מרקט"
-        lines.append(f"{mark} {p['ticker']}: {p['qty']} × {p['price']} = ${p['value']:,.0f} ({extra})")
-        if on:
-            total += p["value"]
-    lines.append(f"\nסה\"כ לאישור: ${total:,.0f}")
-    if res.get("cash") is not None:
-        lines.append(f"מזומן בחשבון: ${res['cash']:,.0f}")
+    for kind, res in st["parts"].items():
+        rows = res.get("plan") or []
+        lines.append(f"\n{PLAN_LABEL[kind]}" + (f" - מזומן ${res['cash']:,.0f}" if res.get("cash") is not None else ""))
+        if not rows:
+            lines.append(f"  אין מה לקנות: {res.get('reason') or 'התוכנית ריקה'}")
+        for p in rows:
+            on = (kind, p["ticker"]) in st["selected"]
+            lines.append(_plan_line(kind, p, on))
+            total += p["value"] if on else 0.0
+    lines.append(f"\nסה\"כ לאישור: ${total:,.0f} ({len(st['selected'])} פקודות)")
     lines.append("לחיצה על מניה מורידה או מחזירה אותה. המחירים יחושבו מחדש ברגע האישור.")
     return "\n".join(lines)
 
 
-def tg_keyboard(tok: str, rows: list, selected: set) -> dict:
-    btns = [{"text": ("✅ " if p["ticker"] in selected else "⬜ ") + p["ticker"],
-             "callback_data": f"t|{tok}|{p['ticker']}"} for p in rows]
-    grid = [btns[i:i + 3] for i in range(0, len(btns), 3)]
-    grid.append([{"text": f"אשר קנייה ({len(selected)})", "callback_data": f"ok|{tok}"},
+def tg_plan_keyboard(tok: str, st: dict) -> dict:
+    grid = []
+    for kind, res in st["parts"].items():
+        btns = [{"text": ("✅ " if (kind, p["ticker"]) in st["selected"] else "⬜ ")
+                 + f"{KIND_CODE[kind].upper()}:{p['ticker']}",
+                 "callback_data": f"t|{tok}|{KIND_CODE[kind]}|{p['ticker']}"}
+                for p in res.get("plan") or []]
+        grid += [btns[i:i + 3] for i in range(0, len(btns), 3)]
+    grid.append([{"text": f"אשר הכל ({len(st['selected'])})", "callback_data": f"ok|{tok}"},
                  {"text": "בטל", "callback_data": f"no|{tok}"}])
     return {"inline_keyboard": grid}
 
 
-def tg_offer(kind: str, quiet: bool = False) -> None:
-    """שולח את התוכנית לאישור. quiet=True: לא שולח כלום אם אין מה לקנות."""
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+def _remember(st: dict, msg) -> None:
+    if msg:
+        st["msg"], st["at"] = msg["message_id"], time.time()
+        with _tg_lock:
+            _tg["pending"][st["tok"]] = st
+
+
+def tg_offer(kinds, quiet: bool = False) -> None:
+    """שולח הודעה אחת עם התוכניות של kinds. quiet=True: כלום אם אין מה לקנות."""
+    chat = tg_chat()
     if not chat:
         return
-    if kind not in accounts_available():
+    if isinstance(kinds, str):
+        kinds = [kinds]
+    parts = {}
+    for kind in kinds:
+        if kind not in accounts_available():
+            parts[kind] = {"plan": [], "reason": "החשבון לא מוגדר ב-.env"}
+            continue
+        with using(kind):
+            parts[kind] = plan_for(kind) or {"plan": []}
+    selected = {(k, p["ticker"]) for k, r in parts.items() for p in r.get("plan") or []}
+    if not selected:
         if not quiet:
-            tg_call("sendMessage", chat_id=chat, text=f"{PLAN_LABEL[kind]}: החשבון לא מוגדר ב-.env")
+            tg_call("sendMessage", chat_id=chat, text=tg_plan_text(
+                {"parts": parts, "selected": set()}).split("\nסה")[0])
         return
-    with using(kind):
-        res = plan_for(kind) or {}
-    rows = res.get("plan") or []
-    if not rows:
-        if not quiet:
-            tg_call("sendMessage", chat_id=chat,
-                    text=f"{PLAN_LABEL[kind]}: אין מה לקנות - {res.get('reason') or 'התוכנית ריקה'}")
+    if quiet:       # בהודעה האוטומטית לא מציגים חשבון שאין בו מה לקנות
+        parts = {k: r for k, r in parts.items() if r.get("plan")}
+    st = {"type": "buy", "tok": secrets.token_hex(4), "parts": parts, "selected": selected}
+    msg = tg_call("sendMessage", chat_id=chat, text=tg_plan_text(st),
+                  reply_markup=tg_plan_keyboard(st["tok"], st))
+    print(f"טלגרם: תוכניות {','.join(parts)} ({len(selected)}) {'נשלחו' if msg else 'לא נשלחו'}",
+          flush=True)
+    _remember(st, msg)
+
+
+def tg_sell_text(st: dict) -> str:
+    lines = ["סווינג - יום 15: למכור לפי הכלל (מרקט, הסטופ מבוטל קודם)"]
+    for sym in sorted(st["syms"]):
+        lines.append(f"{'✅' if sym in st['selected'] else '⬜'} {sym}")
+    return "\n".join(lines)
+
+
+def tg_sell_keyboard(st: dict) -> dict:
+    btns = [{"text": ("✅ " if s in st["selected"] else "⬜ ") + s,
+             "callback_data": f"t|{st['tok']}|x|{s}"} for s in sorted(st["syms"])]
+    grid = [btns[i:i + 3] for i in range(0, len(btns), 3)]
+    grid.append([{"text": f"מכור ({len(st['selected'])})", "callback_data": f"ok|{st['tok']}"},
+                 {"text": "לא עכשיו", "callback_data": f"no|{st['tok']}"}])
+    return {"inline_keyboard": grid}
+
+
+def tg_offer_sell(syms) -> None:
+    chat = tg_chat()
+    syms = {s.upper() for s in syms}
+    if not chat or not syms:
         return
-    tok = secrets.token_hex(4)
-    selected = {p["ticker"] for p in rows}
-    msg = tg_call("sendMessage", chat_id=chat, text=tg_plan_text(kind, res, selected),
-                  reply_markup=tg_keyboard(tok, rows, selected))
-    print(f"טלגרם: תוכנית {kind} ({len(rows)}) {'נשלחה' if msg else 'לא נשלחה'}", flush=True)
-    if msg:
-        with _tg_lock:
-            _tg["pending"][tok] = {"kind": kind, "res": res, "selected": selected,
-                                   "msg": msg["message_id"], "at": time.time()}
+    st = {"type": "sell", "tok": secrets.token_hex(4), "syms": syms, "selected": set(syms)}
+    msg = tg_call("sendMessage", chat_id=chat, text=tg_sell_text(st),
+                  reply_markup=tg_sell_keyboard(st))
+    print(f"טלגרם: מכירת יום 15 ({len(syms)}) {'נשלחה' if msg else 'לא נשלחה'}", flush=True)
+    _remember(st, msg)
 
 
 def tg_result_text(kind: str, out: list) -> str:
@@ -1996,8 +2071,27 @@ def tg_result_text(kind: str, out: list) -> str:
     return "\n".join(lines)
 
 
+def _execute(st: dict) -> str:
+    if st["type"] == "sell":
+        lines = ["סווינג - מכירה:"]
+        with using("swing"):
+            for sym in sorted(st["selected"]):
+                ok, data = swing_close(sym)
+                lines.append(("✅ " if ok else "❌ ") + sym
+                             + (f" ({data.get('status')})" if ok else f" - {data.get('error')}"))
+        return "\n".join(lines) if st["selected"] else "לא נבחרה אף מניה, לא נמכר כלום."
+    parts = []
+    for kind in st["parts"]:
+        want = {sym for k, sym in st["selected"] if k == kind}
+        if not want:
+            continue
+        with using(kind):
+            parts.append(tg_result_text(kind, execute_plan(kind, want)))
+    return "\n\n".join(parts) or "לא נבחרה אף מניה, לא נשלחו פקודות."
+
+
 def tg_handle_callback(cq: dict) -> None:
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    chat = tg_chat()
     frm = str((cq.get("from") or {}).get("id", ""))
     if not chat or frm != chat:
         tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="לא מורשה")
@@ -2009,52 +2103,120 @@ def tg_handle_callback(cq: dict) -> None:
         if st and time.time() - st["at"] > TG_TTL:
             _tg["pending"].pop(tok, None)
             st = None
-        if st and parts[0] == "t" and len(parts) == 3:
-            st["selected"] ^= {parts[2]}
+        if st and parts[0] == "t" and len(parts) == 4:
+            key = parts[3] if st["type"] == "sell" else (CODE_KIND.get(parts[2]), parts[3])
+            st["selected"] ^= {key}
         elif st and parts[0] in ("ok", "no"):
             _tg["pending"].pop(tok, None)     # לחיצה כפולה לא שולחת פעמיים
     if not st:
         tg_call("answerCallbackQuery", callback_query_id=cq["id"],
                 text="פג תוקף. שלח /plan לתוכנית חדשה", show_alert=True)
         return
-    kind = st["kind"]
     if parts[0] == "t":
         tg_call("answerCallbackQuery", callback_query_id=cq["id"])
-        tg_call("editMessageText", chat_id=chat, message_id=st["msg"],
-                text=tg_plan_text(kind, st["res"], st["selected"]),
-                reply_markup=tg_keyboard(tok, st["res"]["plan"], st["selected"]))
+        if st["type"] == "sell":
+            text, kb = tg_sell_text(st), tg_sell_keyboard(st)
+        else:
+            text, kb = tg_plan_text(st), tg_plan_keyboard(tok, st)
+        tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=text, reply_markup=kb)
         return
     if parts[0] == "no":
         tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="בוטל")
         tg_call("editMessageText", chat_id=chat, message_id=st["msg"],
-                text=f"{PLAN_LABEL[kind]}: בוטל, לא נשלחו פקודות.")
+                text="בוטל, לא נשלחו פקודות.")
         return
     tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="שולח...")
-    if not st["selected"]:
-        out = []
-    else:
-        with using(kind):
-            out = execute_plan(kind, st["selected"])
-    tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=tg_result_text(kind, out))
+    tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=_execute(st))
 
 
-TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham, /spy - תוכנית אחת.\n"
-           "כל תוכנית נשלחת רק אחרי לחיצה על 'אשר קנייה'.")
+# ---------------------------------------------------------------------------
+# סיכום יומי אחרי הסגירה
+# ---------------------------------------------------------------------------
+
+def day_summary(day: str) -> str:
+    lines = [f"סיכום יום המסחר {day}"]
+    for acct in accounts_available():
+        with using(acct):
+            ok_a, a = api("GET", f"{base()}/v2/account")
+            ok_p, pos = api("GET", f"{base()}/v2/positions")
+            ok_o, orders = api("GET", f"{base()}/v2/orders",
+                               params={"status": "closed", "limit": 200, "nested": "true",
+                                       "after": f"{day}T00:00:00Z"})
+        if not ok_a:
+            lines.append(f"\n{dict((x, l) for x, l, _ in ACCOUNTS).get(acct, acct)}: לא הצלחתי לקרוא")
+            continue
+        eq = _f(a.get("equity")) or 0.0
+        last = _f(a.get("last_equity")) or eq
+        chg = eq - last
+        pct = (chg / last * 100) if last else 0.0
+        label = dict((x, l) for x, l, _ in ACCOUNTS).get(acct, acct)
+        lines.append(f"\n{label}: ${eq:,.0f} ({'+' if chg >= 0 else ''}{chg:,.0f}, "
+                     f"{'+' if pct >= 0 else ''}{pct:.2f}%) | {len(pos) if ok_p else '?'} פוזיציות"
+                     f" | מזומן ${_f(a.get('cash')) or 0:,.0f}")
+        fills = [o for o in flatten_orders(orders if ok_o else [])
+                 if o.get("status") == "filled" and str(o.get("filled_at") or "")[:10] == day]
+        buys = [f"{o['symbol']} {o.get('filled_qty')}@{_f(o.get('filled_avg_price')) or 0:.2f}"
+                for o in fills if o.get("side") == "buy"]
+        stops = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
+                 for o in fills if o.get("side") == "sell" and o.get("type") in ("stop", "stop_limit")]
+        targets = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
+                   for o in fills if o.get("side") == "sell" and o.get("type") == "limit"]
+        other = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
+                 for o in fills if o.get("side") == "sell" and o.get("type") == "market"]
+        if buys:
+            lines.append("  נקנו: " + ", ".join(buys))
+        if stops:
+            lines.append("  סטופ הופעל: " + ", ".join(stops))
+        if targets:
+            lines.append("  יעד הושג: " + ", ".join(targets))
+        if other:
+            lines.append("  נמכרו: " + ", ".join(other))
+    return "\n".join(lines)
+
+
+def summary_tick() -> None:
+    """פעם ביום מסחר, אחרי 16:10 בניו יורק, כשהשוק סגור."""
+    if not accounts_available():
+        return
+    ok, clock = api("GET", f"{base()}/v2/clock")
+    if not ok or clock.get("is_open"):
+        return
+    try:
+        now = datetime.fromisoformat(str(clock.get("timestamp")).replace("Z", "+00:00"))
+    except ValueError:
+        return
+    day = now.date()
+    if not swing.is_trading_day(day) or (now.hour, now.minute) < (16, 10):
+        return
+    state = _remind_state()
+    if state.get("summary") == day.isoformat():
+        return
+    state["summary"] = day.isoformat()
+    _remind_save(state)
+    telegram_send(day_summary(day.isoformat()))
+
+
+TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham, /spy - תוכנית אחת; "
+           "/summary - סיכום היום.\nשום פקודה לא נשלחת בלי לחיצה על אישור.")
 
 
 def tg_handle_message(msg: dict) -> None:
-    chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    chat = tg_chat()
     if not chat or str((msg.get("chat") or {}).get("id", "")) != chat:
         return
     cmd = str(msg.get("text") or "").strip().split("@")[0].lower()
+    if cmd == "/summary":
+        ok, clock = api("GET", f"{base()}/v2/clock")
+        day = str(clock.get("timestamp", ""))[:10] if ok else date.today().isoformat()
+        tg_call("sendMessage", chat_id=chat, text=day_summary(day))
+        return
     kinds = {"/plan": list(PLAN_KINDS), "/swing": ["swing"], "/graham": ["graham"],
              "/spy": ["spy"]}.get(cmd)
     if kinds is None:
         if cmd.startswith("/"):
             tg_call("sendMessage", chat_id=chat, text=TG_HELP)
         return
-    for k in kinds:
-        tg_offer(k)
+    tg_offer(kinds)
 
 
 def tg_loop() -> None:
