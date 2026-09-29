@@ -1814,8 +1814,7 @@ def remind_tick() -> None:
         lines.append("סווינג: SPY מתחת לממוצע 200 - אין כניסות היום.")
     elif rows:
         top = [r["ticker"] for r in rows if r.get("quality") == 3][:8]
-        lines.append(f"סווינג: {len(rows)} אותות היום" + (f" (ציון 3: {', '.join(top)})" if top else "")
-                     + ". בחלון הסווינג: 'קנה את כל האותות'.")
+        lines.append(f"סווינג: {len(rows)} אותות היום" + (f" (ציון 3: {', '.join(top)})" if top else "") + ".")
     if "swing" in accounts_available():
         with using("swing"):
             smap = swing_map(force=True)
@@ -1826,13 +1825,17 @@ def remind_tick() -> None:
         if due:
             lines.append("סווינג - יום 15, למכור היום: " + ", ".join(sorted(due))
                          + " (כפתור מכירה בהודעה נפרדת)")
-    if day[8:10] <= "07" and "graham" in accounts_available():
-        lines.append("גראהם: שבוע ראשון בחודש - 'קנייה חודשית' בחשבון גראהם.")
-    if lines:
-        telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
     if "swing" in accounts_available() and due:
         tg_offer_sell(due)
-    tg_offer(list(PLAN_KINDS), quiet=True)   # הודעה אחת עם כל התוכניות לאישור
+    sent, parts = tg_offer(list(PLAN_KINDS), quiet=True)   # הודעה אחת עם כל התוכניות לאישור
+    if sent:
+        lines.append("קניות לאישור: בהודעה נפרדת עם כפתור אישור.")
+    else:
+        why = [f"{PLAN_LABEL[k]} - {r.get('reason') or 'ריק'}" for k, r in parts.items()
+               if not r.get("plan")]
+        lines.append("אין קניות לאישור היום" + (": " + "; ".join(why) if why else "."))
+    if lines:
+        telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
 
 
 def remind_loop() -> None:
@@ -2003,11 +2006,11 @@ def _remember(st: dict, msg) -> None:
             _tg["pending"][st["tok"]] = st
 
 
-def tg_offer(kinds, quiet: bool = False) -> None:
+def tg_offer(kinds, quiet: bool = False) -> tuple:
     """שולח הודעה אחת עם התוכניות של kinds. quiet=True: כלום אם אין מה לקנות."""
     chat = tg_chat()
     if not chat:
-        return
+        return False, {}
     if isinstance(kinds, str):
         kinds = [kinds]
     parts = {}
@@ -2022,7 +2025,7 @@ def tg_offer(kinds, quiet: bool = False) -> None:
         if not quiet:
             tg_call("sendMessage", chat_id=chat, text=tg_plan_text(
                 {"parts": parts, "selected": set()}).split("\nסה")[0])
-        return
+        return False, parts
     if quiet:       # בהודעה האוטומטית לא מציגים חשבון שאין בו מה לקנות
         parts = {k: r for k, r in parts.items() if r.get("plan")}
     st = {"type": "buy", "tok": secrets.token_hex(4), "parts": parts, "selected": selected}
@@ -2031,6 +2034,7 @@ def tg_offer(kinds, quiet: bool = False) -> None:
     print(f"טלגרם: תוכניות {','.join(parts)} ({len(selected)}) {'נשלחו' if msg else 'לא נשלחו'}",
           flush=True)
     _remember(st, msg)
+    return bool(msg), parts
 
 
 def tg_sell_text(st: dict) -> str:

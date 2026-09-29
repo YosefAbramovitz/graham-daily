@@ -150,3 +150,15 @@ def test_day_summary():
         assert "+100" in txt and "+1.00%" in txt
         assert "נקנו: GL 4@170.00" in txt and "סטופ הופעל: GL @161.80" in txt
     _run(body)
+
+
+def test_offer_returns_reasons_when_nothing_to_buy():
+    def body(calls, executed):
+        app.plan_for = lambda kind: {"plan": [], "reason": "אין מזומן"}
+        sent, parts = app.tg_offer(list(app.PLAN_KINDS), quiet=True)
+        assert sent is False and not calls
+        assert all(r["reason"] == "אין מזומן" for r in parts.values())
+        app.plan_for = _plan
+        sent, parts = app.tg_offer(list(app.PLAN_KINDS), quiet=True)
+        assert sent is True and "swing" in parts
+    _run(body)
