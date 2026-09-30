@@ -107,12 +107,16 @@ def month_ends(start: date, end: date, close: pd.DataFrame) -> list:
 
 
 def main() -> int:
+    global OUT
     p = argparse.ArgumentParser()
     p.add_argument("--start", default="2016-01-01", help="תחילת הנרות")
     p.add_argument("--first-entry", default="2017-01-01", help="החודש הראשון לכניסות")
     p.add_argument("--end", default="2025-12-31")
     p.add_argument("--skip-bars", action="store_true", help="להשתמש בנרות שכבר נשמרו")
+    p.add_argument("--bars-only", action="store_true", help="רק נרות, בלי דוחות ובלי מסך")
+    p.add_argument("--out", default=str(OUT), help="תיקיית המטמון")
     a = p.parse_args()
+    OUT = Path(a.out)
     from app import load_env           # מפתחות Alpaca מ-.env, בלי להדפיס אותם
     load_env()
     start, end = date.fromisoformat(a.start), date.fromisoformat(a.end)
@@ -144,6 +148,8 @@ def main() -> int:
     close = data["close"]
     print(f"נרות: {close.shape[1]} סימולים, {close.index.min().date()}..{close.index.max().date()}"
           f" ({time.time()-t0:.0f}s)", flush=True)
+    if a.bars_only:
+        return 0
 
     cik = sf.ticker_to_cik(quiet=False)
     facts = {}

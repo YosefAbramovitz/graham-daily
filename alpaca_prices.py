@@ -18,6 +18,10 @@ yfinance הוא מגרד של אתר, לא ממשק. הוא נופל מדי פע
     ALPACA_API_KEY_ID
     ALPACA_API_SECRET_KEY
 
+על הלפטופ, בלי החשבון הראשי, כל אחד ממפתחות חשבונות ה-paper
+(ALPACA_SWING_*, ALPACA_SPY_*, ALPACA_GRAHAM_*) טוב באותה מידה: נתוני שוק לא
+תלויים בחשבון.
+
 במאגר הם מוגדרים כסודות (Settings -> Secrets and variables -> Actions).
 המפתח לא נכתב בקוד ולא נשמר בקובץ.
 
@@ -41,10 +45,16 @@ PAGE_LIMIT = 10_000  # שורות לעמוד
 FIRST_YEAR = 2016    # תחילת הנתונים בחשבון החינמי
 
 
+KEY_PREFIXES = ("ALPACA_API", "ALPACA_SWING", "ALPACA_SPY", "ALPACA_GRAHAM")
+
+
 def credentials() -> Optional[tuple]:
-    key = os.environ.get("ALPACA_API_KEY_ID", "").strip()
-    secret = os.environ.get("ALPACA_API_SECRET_KEY", "").strip()
-    return (key, secret) if key and secret else None
+    for prefix in KEY_PREFIXES:
+        key = os.environ.get(f"{prefix}_KEY_ID", "").strip()
+        secret = os.environ.get(f"{prefix}_SECRET_KEY", "").strip()
+        if key and secret:
+            return key, secret
+    return None
 
 
 def available() -> bool:

@@ -186,7 +186,7 @@ def portfolio(d: Data, t: pd.DataFrame, risk=0.01, max_pos=10, cap=0.20, rank="r
         # יציאות: הערך מחושב לפי תשואת העסקה הסופית ביום היציאה
         keep = []
         for p in pos:
-            if p["x"] == j:
+            if p["x"] <= j:           # כולל עסקה שנעצרה ביום הכניסה (x == יום הכניסה)
                 cash += p["amt"] * (1 + p["ret"])
             else:
                 keep.append(p)

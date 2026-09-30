@@ -12,8 +12,8 @@ def test_holidays_and_exit_date():
     assert not swing.is_trading_day(date(2025, 4, 18))       # יום שישי הטוב
     assert not swing.is_trading_day(date(2026, 7, 3))        # 4 ביולי נופל בשבת
     assert swing.is_trading_day(date(2025, 10, 13))          # קולומבוס: הבורסה פתוחה
-    # כניסה ביום שני 22.12.2025: היום ה-15 כולל הכניסה, בדילוג על 25.12 ו-1.1
-    assert swing.exit_date(date(2025, 12, 22)) == date(2026, 1, 13)
+    # כניסה ביום שני 22.12.2025: היום ה-20 כולל הכניסה, בדילוג על 25.12, 1.1 ו-19.1 (MLK)
+    assert swing.exit_date(date(2025, 12, 22)) == date(2026, 1, 21)
     assert swing.trading_days_between(date(2025, 12, 22), date(2025, 12, 26)) == 4
 
 
