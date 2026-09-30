@@ -83,19 +83,6 @@ function chart(rows){
   $("chart").innerHTML = svg + "</svg>";
 }
 
-async function buySpy(){
-  try {
-    const d = await jget("/api/plan/spy?acct=spy");
-    const p = (d.plan || [])[0];
-    if (!p) { $("err").innerHTML = `<div class="err">${esc(d.reason || "אין מה לקנות")}</div>`; return; }
-    const w = prompt(`לקנות ${p.qty} מניות SPY (כ-${p.value.toFixed(0)}$) בחשבון S&P 500? הקלד BUY לאישור`);
-    if (w !== "BUY") return;
-    const r = await jpost("/api/plan/spy/buy?acct=spy", {confirm: "BUY", tickers: ["SPY"]});
-    const x = r.rows[0] || {};
-    $("err").innerHTML = `<div class="err ${x.ok ? "ok" : ""}">${x.ok ? `נשלחה קנייה של ${x.qty} SPY (${esc(x.status)})` : esc(x.error || "לא נשלח")}</div>`;
-  } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
-}
-
 async function load(){
   try {
     const d = await jget("/api/compare");
@@ -110,7 +97,7 @@ async function load(){
           <div class="row"><span>פוזיציות</span><b>${r.positions ?? "—"}</b></div>
           <div class="row"><span>קניות / מכירות</span><b>${r.buys} / ${r.sells}</b></div>
           <div class="row"><span>מתחילת</span><b>${esc(r.since || "—")}</b></div>
-          ${r.id === "spy" && (r.cash || 0) > 100 ? `<button class="btn primary" onclick="buySpy()">השקע את המזומן ב-SPY</button>` : ""}
+          ${r.sim ? `<p class="sm">הדמיה מקומית, לא חשבון באלפקה: ${r.shares} מניות SPY נקנו בסגירה של ${esc(r.since || "—")} ומוחזקות, כולל דיבידנדים.</p>` : ""}
         </div>`).join("") : `<div class="card">לא הוגדרו חשבונות ב-.env.</div>`;
     chart(rows);
   } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }

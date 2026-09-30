@@ -5,7 +5,7 @@
     עד 15 פוזיציות ועד המזומן. קנייה market עם סטופ צמוד ב-swing.STOP_ATR (4 ATR).
   * גראהם: המניות מהמסך שלא נפסלו, הזולות קודם (value_rank), עד 15 פוזיציות
     במשקל שווה (1/15 מהתיק), עם יעד מכירה +50%.
-  * S&P 500: כל המזומן ב-SPY.
+  * S&P 500: כבר לא חשבון באלפקה - הדמיה מקומית ב-spy_sim.py.
 """
 
 from __future__ import annotations
@@ -79,8 +79,3 @@ def plan_graham(rows: List[dict], equity: float, cash: float, prices: Dict[str, 
                     "pct": round(qty * limit / equity * 100, 1) if equity else None})
     return out
 
-
-def plan_spy(cash: float, price: float) -> dict:
-    qty = int(math.floor(max(0.0, cash) / price)) if price and price > 0 else 0
-    return {"ticker": "SPY", "qty": qty, "price": round(price or 0, 2),
-            "value": round(qty * (price or 0), 2)}

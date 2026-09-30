@@ -1076,7 +1076,7 @@ function askSwing(t){
 async function switchAcct(id){
   try { await jpost("/api/account", {id}); location.reload(); } catch (e) { showErr(e.message); }
 }
-const PLAN_TITLE = {swing: "סווינג: קניית כל האותות", graham: "גראהם: קנייה חודשית", spy: "S&P 500: כל המזומן ב-SPY"};
+const PLAN_TITLE = {swing: "סווינג: קניית כל האותות", graham: "גראהם: קנייה חודשית"};
 async function askPlan(kind){
   let d;
   try { d = await jget("/api/plan/" + kind); } catch (e) { showErr(e.message); return; }

@@ -89,6 +89,7 @@ from flask import (Flask, has_request_context, jsonify, redirect, request,
                    send_from_directory)
 
 import plans
+import spy_sim
 import swing
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
                          exit_state, flatten_orders, fraction_order_body,
@@ -358,9 +359,9 @@ def load_env() -> None:
 # החשבון שנבחר (עוגייה gd_acct). נתוני שוק לא תלויים בחשבון - כל מפתח טוב להם.
 # ---------------------------------------------------------------------------
 
+# S&P 500 כבר לא חשבון באלפקה (בוטל, ספט' 2026) אלא הדמיה מקומית - spy_sim.py ו-spy_sim_row.
 ACCOUNTS = [  # (מזהה, שם, קידומת במשתני הסביבה)
     ("swing", "סווינג", "ALPACA_SWING"),
-    ("spy", "S&P 500", "ALPACA_SPY"),
     ("graham", "גראהם", "ALPACA_GRAHAM"),
     ("main", "ראשי", "ALPACA_API"),
 ]
@@ -1207,6 +1208,36 @@ def compare_page():
 
 
 _compare = {"at": 0.0, "data": None}
+SPY_SIM_FILE = HERE / "spy_sim.json"
+_spy_sim = {"at": 0.0, "key": None, "data": None}
+
+
+def spy_sim_row(since_hint: Optional[str] = None, today: Optional[str] = None) -> Optional[dict]:
+    """S&P 500 בהדמיה: 10,000$ ב-SPY מיום ההתחלה (נקבע בפעם הראשונה ונשמר ב-spy_sim.json).
+    הנרות והמחיר החי מאלפקה עם מפתח של חשבון כלשהו (נתוני שוק לא תלויים בחשבון)."""
+    key = today or date.today().isoformat()
+    if _spy_sim["data"] and _spy_sim["key"] == key and time.time() - _spy_sim["at"] < 120:
+        return _spy_sim["data"]
+    avail = accounts_available()
+    if not avail:
+        return None
+    st = spy_sim.load_settings(SPY_SIM_FILE)
+    if not st.get("start"):
+        st = {"start": since_hint or date.today().isoformat(), "cash": spy_sim.CASH}
+        spy_sim.save_settings(SPY_SIM_FILE, st)
+    start = date.fromisoformat(st["start"])
+    with using(avail[0]):
+        bars = (_swing_bars(["SPY"], start - timedelta(days=7), date.today()) or {}).get("SPY") or []
+        live = last_trade("SPY")
+    closes = [(str(b["t"])[:10], float(b["c"])) for b in bars]
+    r = spy_sim.simulate(closes, st["start"], float(st.get("cash") or spy_sim.CASH), live, today)
+    row = {"id": "spy_sim", "label": "S&P 500 (הדמיה)", "sim": True, "equity": r["equity"],
+           "cash": 0.0, "start": r["start_value"], "ret": r["ret"], "maxdd": r["maxdd"],
+           "positions": 1 if r["shares"] else 0, "buys": 1 if r["shares"] else 0, "sells": 0,
+           "since": r["since"] or st["start"], "points": r["points"], "shares": round(r["shares"], 4),
+           "price": r["price"], "day_change": r["day_change"]}
+    _spy_sim.update(at=time.time(), key=key, data=row)
+    return row
 
 
 @app.get("/api/compare")
@@ -1249,6 +1280,13 @@ def api_compare():
             "sells": sum(1 for o in fills if o.get("side") == "sell"),
             "since": pts[0][0] if pts else None, "points": pts,
         })
+    sinces = [r["since"] for r in rows if r.get("since")]
+    try:
+        sim = spy_sim_row(min(sinces) if sinces else None)
+    except Exception as e:  # ההדמיה לא מפילה את מסך ההשוואה
+        sim = {"id": "spy_sim", "label": "S&P 500 (הדמיה)", "error": str(e)}
+    if sim:
+        rows.append(sim)
     out = {"rows": rows, "at": now_iso()}
     _compare.update(at=time.time(), data=out)
     return jsonify(out)
@@ -1687,7 +1725,7 @@ def graham_plan() -> dict:
             "reason": None if plan else "התיק מלא (15) או שאין מזומן"}
 
 
-PLAN_KINDS = ("swing", "graham", "spy")
+PLAN_KINDS = ("swing", "graham")
 
 
 def _wrong_acct(kind: str):
@@ -1704,25 +1742,13 @@ def plan_for(kind: str) -> Optional[dict]:
         return swing_plan()
     if kind == "graham":
         return graham_plan()
-    if kind == "spy":
-        b = _book()
-        px = last_trade("SPY")
-        if not b or not px:
-            return {"plan": [], "reason": "לא הצלחתי לקרוא חשבון או מחיר"}
-        p = plans.plan_spy(b["cash"], px)
-        return {"plan": [p] if p["qty"] else [], "cash": b["cash"],
-                "reason": None if p["qty"] else "אין מזומן"}
     return None
 
 
 def execute_plan(kind: str, want) -> list:
     """שולח את הפקודות של התוכנית - רק הסימולים שאושרו, מחושבים מחדש עכשיו."""
     want = {str(t).upper() for t in want or []}
-    if kind == "spy":
-        b, px = _book(), last_trade("SPY")
-        plan = [plans.plan_spy(b["cash"], px)] if b and px and "SPY" in want else []
-    else:
-        plan = [p for p in (plan_for(kind) or {}).get("plan", []) if p["ticker"] in want]
+    plan = [p for p in (plan_for(kind) or {}).get("plan", []) if p["ticker"] in want]
     out = []
     for p in plan:
         if kind == "swing":
@@ -1731,10 +1757,7 @@ def execute_plan(kind: str, want) -> list:
         elif kind == "graham":
             order = entry_order_body(p["ticker"], p["qty"], p["price"], p["target"])
         else:
-            if p["qty"] < 1:
-                continue
-            order = {"symbol": "SPY", "qty": str(p["qty"]), "side": "buy", "type": "market",
-                     "time_in_force": "day"}
+            continue
         ok, data = api("POST", f"{base()}/v2/orders", data=json.dumps(order))
         out.append({"ticker": p["ticker"], "qty": p["qty"], "ok": ok,
                     "status": data.get("status") if ok else None,
@@ -1927,13 +1950,13 @@ def telegram_send(text: str) -> bool:
 
 # ---------------------------------------------------------------------------
 # אישור בטלגרם. כל יום עם פתיחת השוק: הודעה אחת עם כל התוכניות (סווינג /
-# גראהם / S&P), כפתור לכל מניה (להוריד/להחזיר) וכפתור "אשר הכל"; פוזיציות
+# גראהם), כפתור לכל מניה (להוריד/להחזיר) וכפתור "אשר הכל"; פוזיציות
 # סווינג ביום היציאה עם כפתור "מכור"; ואחרי הסגירה סיכום יומי. שום פקודה לא
 # נשלחת בלי לחיצה על אישור בצ'אט המוגדר. הקנייה מחושבת מחדש ברגע האישור.
 # ---------------------------------------------------------------------------
 
-PLAN_LABEL = {"swing": "סווינג", "graham": "גראהם", "spy": "S&P 500"}
-KIND_CODE = {"swing": "s", "graham": "g", "spy": "p"}
+PLAN_LABEL = {"swing": "סווינג", "graham": "גראהם"}
+KIND_CODE = {"swing": "s", "graham": "g"}
 CODE_KIND = {v: k for k, v in KIND_CODE.items()}
 TG_TTL = 6 * 3600          # אחרי זה ההודעה פגה ונדרשת /plan חדשה
 _tg = {"pending": {}, "offset": None}
@@ -2175,6 +2198,16 @@ def day_summary(day: str) -> str:
             lines.append("  יעד הושג: " + ", ".join(targets))
         if other:
             lines.append("  נמכרו: " + ", ".join(other))
+    try:
+        sim = spy_sim_row(today=day)
+    except Exception:
+        sim = None
+    if sim and not sim.get("error"):
+        eq, chg = sim["equity"], sim["day_change"]
+        pct = chg / (eq - chg) * 100 if eq - chg else 0.0
+        lines.append(f"\n{sim['label']}: ${eq:,.0f} ({'+' if chg >= 0 else ''}{chg:,.0f}, "
+                     f"{'+' if pct >= 0 else ''}{pct:.2f}%) | תשואה מ-{sim['since']}: "
+                     f"{sim['ret'] * 100:+.2f}%")
     return "\n".join(lines)
 
 
@@ -2200,7 +2233,7 @@ def summary_tick() -> None:
     telegram_send(day_summary(day.isoformat()))
 
 
-TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham, /spy - תוכנית אחת; "
+TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham - תוכנית אחת; "
            "/summary - סיכום היום.\nשום פקודה לא נשלחת בלי לחיצה על אישור.")
 
 
@@ -2214,8 +2247,7 @@ def tg_handle_message(msg: dict) -> None:
         day = str(clock.get("timestamp", ""))[:10] if ok else date.today().isoformat()
         tg_call("sendMessage", chat_id=chat, text=day_summary(day))
         return
-    kinds = {"/plan": list(PLAN_KINDS), "/swing": ["swing"], "/graham": ["graham"],
-             "/spy": ["spy"]}.get(cmd)
+    kinds = {"/plan": list(PLAN_KINDS), "/swing": ["swing"], "/graham": ["graham"]}.get(cmd)
     if kinds is None:
         if cmd.startswith("/"):
             tg_call("sendMessage", chat_id=chat, text=TG_HELP)

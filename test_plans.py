@@ -25,7 +25,3 @@ def test_graham_plan_equal_weight_cheapest_first():
     assert [x["ticker"] for x in one] == ["A"]
     assert len(plans.plan_graham(rows, 15_000, 15_000, prices, [], 15)) == 0
 
-
-def test_spy_plan():
-    assert plans.plan_spy(10_000, 600.0)["qty"] == 16
-    assert plans.plan_spy(100, 600.0)["qty"] == 0
