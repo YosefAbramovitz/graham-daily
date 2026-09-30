@@ -1,228 +1,195 @@
-"""
-Kronos (github.com/shiyu-coder/Kronos) כמסנן על אותות הסווינג.
+﻿"""
+Kronos (github.com/shiyu-coder/Kronos, מודל יסוד לנרות) - בדיקה קדימה בלבד (ספט' 2026).
 
-Kronos הוא מודל שאומן על נרות OHLCV מ-45 בורסות וצופה את הנרות הבאים. השאלה
-כאן: ביום האות של כלל הסווינג (RSI14 מתחת ל-35 במגמה עולה), האם העסקאות שהמודל
-צופה להן עלייה ב-15 הימים הבאים עושות יותר מהשאר?
+תאריך סוף נתוני האימון של Kronos לא פורסם (המאמר: אוגוסט 2025), ולכן בדיקה על 2016-2025
+חסרת ערך - ייתכן שהמודל ראה את הנרות. כאן רק אותות מ-1.10.2025 ואילך.
+דורש torch (CPU; במחשב הזה 2.6.0 - גרסאות חדשות נופלות על ספריית VC++ ישנה) ו-einops,
+huggingface_hub, safetensors, ואת הקוד של Kronos ב-variants_cache/kronos_repo.
 
-זליגה: המודל ראה בזמן האימון את ההיסטוריה של רוב המניות. כל בדיקה על תאריך
-שלפני סוף האימון שלו מודדת זיכרון ולא תחזית. לכן בודקים רק אותות מ-SINCE והלאה
-(ברירת מחדל ספטמבר 2025, אחרי פרסום המודל). החלון קצר, אז גם השוואה לסינון
-אקראי באותו גודל.
-
-המודל רואה רק את הנרות עד סגירת יום האות (כולל), ולוחות הזמנים העתידיים הם ימי
-עסקים ולא לוח המסחר האמיתי - בלי הצצה.
-
-התקנה (פעם אחת, על הלפטופ):
-    git clone https://github.com/shiyu-coder/Kronos variants_cache/Kronos
-    py -m pip install torch einops huggingface_hub safetensors tqdm
-
-    python kronos_sim.py [variants_cache] [--since 2025-09-01] [--model NeoQuasar/Kronos-small]
-
-התחזיות נשמרות ב-variants_cache/kronos_preds.csv, והרצה חוזרת ממשיכה מאיפה שעצרה.
+    python kronos_sim.py fetch      # נרות S&P 1500 מ-2024 עד היום (אלפקה)
+    python kronos_sim.py predict    # תחזית 20 יום לכל אות סווינג, נשמר ברצף (אפשר להמשיך)
+    python kronos_sim.py sample     # תחזיות למניות אקראיות בימים אקראיים (IC כללי)
+    python kronos_sim.py eval
 """
 from __future__ import annotations
 
-import argparse
-import math
+import os
 import sys
+import time
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 import swing
-from books_sim import portfolio
-from ideas_sim import HOLD, trades
-from swing_sim import Data, pstats
 
-LOOKBACK = 400      # נרות יומיים לפני יום האות (המודל מוגבל ל-512)
-HORIZON = HOLD      # 15 ימי מסחר, כמו היציאה לפי זמן
-SAMPLES = 5         # מסלולים לכל תחזית; Kronos ממצע אותם
-BATCH = 32
-SEED = 123
-RANDOM_RUNS = 1000
+CACHE = Path("variants_cache")
+OUT = CACHE / "kronos"
+FROM = pd.Timestamp("2025-10-01")
+LOOKBACK, PRED = 250, 20   # הקשר קצר ודגימה כפולה: על CPU זה כ-2 שניות לתחזית
 
 
-def load_predictor(repo: Path, model_name: str, tok_name: str):
-    sys.path.insert(0, str(repo))
+def fetch():
+    b = pd.read_pickle(CACHE / "bars.pkl.gz")
+    syms = sorted(set(b["close"].columns) | {"SPY"})
+    import app
+    app.load_env()
+    with app.using("swing"):
+        bars = app._swing_bars(syms, date(2024, 1, 1), date.today())
+    fields = {"o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"}
+    frames_ = {f: {} for f in fields.values()}
+    for sym, bs in bars.items():
+        if not bs:
+            continue
+        idx = pd.to_datetime([str(x["t"])[:10] for x in bs])
+        for k, f in fields.items():
+            frames_[f][sym] = pd.Series([float(x[k]) for x in bs], index=idx)
+    out = {}
+    for f, dd in frames_.items():
+        df = pd.DataFrame(dd).sort_index()
+        out[f] = df[~df.index.duplicated(keep="last")].astype("float64")
+    OUT.mkdir(parents=True, exist_ok=True)
+    pd.to_pickle(out, OUT / "bars.pkl.gz")
+    print(len(out["close"].columns), out["close"].index[0].date(), out["close"].index[-1].date())
+
+
+def frames():
+    b = pd.read_pickle(OUT / "bars.pkl.gz")
+    cut = pd.Timestamp(date.today())          # נר של היום עוד לא נסגר
+    return tuple(b[k][b[k].index < cut] for k in ("open", "high", "low", "close", "volume"))
+
+
+def predictor():
+    sys.path.insert(0, str(CACHE / "kronos_repo"))
     import torch
+    torch.set_num_threads(max(1, (os.cpu_count() or 2) // 2))   # שהמחשב יישאר זמין
     from model import Kronos, KronosPredictor, KronosTokenizer
-    torch.set_num_threads(max(1, min(8, (torch.get_num_threads() or 4) - 2)))
-    tok = KronosTokenizer.from_pretrained(tok_name)
-    mdl = Kronos.from_pretrained(model_name)
-    tok.eval(); mdl.eval()
+    tok = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
+    mdl = Kronos.from_pretrained("NeoQuasar/Kronos-small")
     return KronosPredictor(mdl, tok, device="cpu", max_context=512)
 
 
-def window(d: Data, V: np.ndarray, s: int, k: int):
-    """נרות [s-LOOKBACK+1, s] של מניה k, או None אם חסר משהו."""
-    a = s - LOOKBACK + 1
-    if a < 0:
-        return None
-    x = pd.DataFrame({"open": d.O[a:s + 1, k], "high": d.H[a:s + 1, k], "low": d.L[a:s + 1, k],
-                      "close": d.C[a:s + 1, k], "volume": V[a:s + 1, k]})
-    if x.isna().values.any():
-        return None
-    x["amount"] = x.volume * x.close
-    xt = pd.Series(d.idx[a:s + 1])
-    yt = pd.Series(pd.bdate_range(d.idx[s] + pd.Timedelta(days=1), periods=HORIZON))
-    return x, xt, yt
-
-
-def forecast(d: Data, V: np.ndarray, t: pd.DataFrame, predictor, cache: Path, tag: str) -> pd.DataFrame:
-    """מוסיף ל-t את fc5 ו-fc15: תשואה צפויה מסגירת יום האות ל-5 ול-15 ימים."""
-    key = lambda s, k: (str(d.idx[s].date()), d.cols[k])
-    done = {}
-    if cache.exists():
-        c = pd.read_csv(cache)
-        c = c[c.tag == tag]
-        done = {(r.date, r.ticker): (r.fc5, r.fc15) for r in c.itertuples()}
-    todo = [(s, k) for s, k in zip(t.s, t.k) if key(s, k) not in done]
-    print(f"תחזיות: {len(t) - len(todo)} שמורות, {len(todo)} לחישוב", flush=True)
-    for i in range(0, len(todo), BATCH):
-        chunk = []
-        for s, k in todo[i:i + BATCH]:
-            w = window(d, V, s, k)
-            if w is None:
-                done[key(s, k)] = (np.nan, np.nan)
-            else:
-                chunk.append((s, k, w))
+def run(jobs, path, batch=16, samples=2, limit=None):
+    """jobs: (יום אות, סימול). כל שורה: תחזית הסגירה ליום 1/5/20 ביחס לסגירת יום האות."""
+    O, H, L, C, V = frames()
+    idx = C.index
+    done = set()
+    if path.exists():
+        prev = pd.read_csv(path, parse_dates=["day"])
+        done = set(zip(prev.day, prev.sym))
+    jobs = [j for j in jobs if j not in done][:limit]
+    print("jobs left", len(jobs), flush=True)
+    if not jobs:
+        return
+    p = predictor()
+    for i in range(0, len(jobs), batch):
+        t0 = time.time()
+        chunk = jobs[i:i + batch]
+        dfs, xs, ys, keep = [], [], [], []
+        for day, sym in chunk:
+            s = idx.get_loc(day)
+            if s + 1 < LOOKBACK:
+                continue
+            sl = slice(s + 1 - LOOKBACK, s + 1)
+            x = pd.DataFrame({"open": O[sym].iloc[sl].values, "high": H[sym].iloc[sl].values,
+                              "low": L[sym].iloc[sl].values, "close": C[sym].iloc[sl].values,
+                              "volume": V[sym].iloc[sl].values})
+            if x.isna().any().any():
+                continue
+            dfs.append(x)
+            xs.append(pd.Series(idx[sl]))
+            ys.append(pd.Series(pd.bdate_range(day + pd.Timedelta(days=1), periods=PRED)))
+            keep.append((day, sym))
+        if not dfs:
+            continue
+        preds = p.predict_batch(dfs, xs, ys, pred_len=PRED, T=1.0, top_p=0.9, sample_count=samples, verbose=False)
         rows = []
-        if chunk:
-            import torch
-            torch.manual_seed(SEED + i)
-            np.random.seed(SEED + i)
-            preds = predictor.predict_batch([w[0] for *_, w in chunk], [w[1] for *_, w in chunk],
-                                            [w[2] for *_, w in chunk], pred_len=HORIZON, T=1.0,
-                                            top_p=0.9, sample_count=SAMPLES, verbose=False)
-            for (s, k, _), p in zip(chunk, preds):
-                c0 = d.C[s, k]
-                f5, f15 = p.close.iloc[4] / c0 - 1, p.close.iloc[-1] / c0 - 1
-                done[key(s, k)] = (f5, f15)
-                rows.append({"tag": tag, "date": key(s, k)[0], "ticker": key(s, k)[1], "fc5": f5, "fc15": f15})
-        if rows:
-            pd.DataFrame(rows).to_csv(cache, mode="a", header=not cache.exists(), index=False)
-        print(f"  {min(i + BATCH, len(todo))}/{len(todo)}", flush=True)
-    t = t.copy()
-    t["fc5"] = [done[key(s, k)][0] for s, k in zip(t.s, t.k)]
-    t["fc15"] = [done[key(s, k)][1] for s, k in zip(t.s, t.k)]
-    return t
+        for (day, sym), x, pr in zip(keep, dfs, preds):
+            c0 = x.close.iloc[-1]
+            rows.append(dict(day=day, sym=sym, p1=pr.close.iloc[0] / c0 - 1, p5=pr.close.iloc[4] / c0 - 1,
+                             p20=pr.close.iloc[19] / c0 - 1))
+        pd.DataFrame(rows).to_csv(path, mode="a", header=not path.exists(), index=False)
+        print(f"{i + len(chunk)}/{len(jobs)} {time.time() - t0:.1f}s", flush=True)
 
 
-def spearman(a, b):
-    a, b = pd.Series(a), pd.Series(b)
-    m = a.notna() & b.notna()
-    n = int(m.sum())
-    if n < 4:
-        return np.nan, np.nan, n
-    r = a[m].rank().corr(b[m].rank())
-    tt = r * math.sqrt((n - 2) / max(1e-12, 1 - r * r))
-    return r, tt, n
+def signal_jobs():
+    O, H, L, C, V = frames()
+    sig = swing.signals(C, H, L, V)
+    ok = swing.market_ok(C["SPY"])
+    last = C.index[-PRED - 1]
+    jobs = []
+    for day in C.index[(C.index >= FROM) & (C.index <= last)]:
+        if not ok.loc[day]:
+            continue
+        for sym in sig.columns[sig.loc[day].fillna(False).to_numpy()]:
+            if sym != "SPY":
+                jobs.append((day, sym))
+    return jobs
 
 
-def group(x: pd.DataFrame) -> dict:
-    n = len(x)
-    return {"n": n, "R": x.R.mean(), "t": x.R.mean() / x.R.std() * math.sqrt(n) if n > 2 else np.nan,
-            "win%": (x.ret > 0).mean() * 100, "ret%": x.ret.mean() * 100}
+def sample_jobs(n_days=30, n_syms=12, seed=0):
+    O, H, L, C, V = frames()
+    rng = np.random.default_rng(seed)
+    days = C.index[(C.index >= FROM) & (C.index <= C.index[-PRED - 1])]
+    liquid = (C * V).rolling(20).mean() >= 20e6
+    jobs = []
+    for day in sorted(rng.choice(days, size=min(n_days, len(days)), replace=False)):
+        day = pd.Timestamp(day)
+        cand = [s for s in C.columns[liquid.loc[day].fillna(False).to_numpy()] if s != "SPY"]
+        for sym in rng.choice(cand, size=min(n_syms, len(cand)), replace=False):
+            jobs.append((day, str(sym)))
+    return jobs
 
 
-def book(d: Data, t: pd.DataFrame, score: np.ndarray) -> dict:
-    if t.empty:
-        return {"n": 0, "cagr%": np.nan, "dd%": np.nan, "sharpe": np.nan, "total%": np.nan}
-    e = portfolio(d, t, score)
-    cagr, dd, sh = pstats(e)
-    return {"n": len(t), "cagr%": cagr * 100, "dd%": dd * 100, "sharpe": sh,
-            "total%": (e.iloc[-1] / e.iloc[0] - 1) * 100}
+def realized(df):
+    O, H, L, C, V = frames()
+    idx = C.index
+    for k in (1, 5, 20):
+        r, x = [], []
+        for day, sym in zip(df.day, df.sym):
+            s = idx.get_loc(day)
+            if s + k >= len(idx):
+                r.append(np.nan); x.append(np.nan); continue
+            rr = C[sym].iloc[s + k] / O[sym].iloc[s + 1] - 1
+            rs = C["SPY"].iloc[s + k] / O["SPY"].iloc[s + 1] - 1
+            r.append(rr); x.append(rr - rs)
+        df[f"r{k}"] = r
+        df[f"x{k}"] = x
+    return df
 
 
-def report(d: Data, t: pd.DataFrame, mom: np.ndarray, past5: np.ndarray) -> dict:
-    t = t[t.fc15.notna()].reset_index(drop=True)
-    out = {"n": len(t)}
-    print(f"\n== {len(t)} עסקאות עם תחזית, {d.idx[t.s].min().date()} עד {d.idx[t.s].max().date()}")
-    if len(t) < 10:
-        print("מעט מדי עסקאות למסקנה.")
-        return out
-
-    print("\n== מתאם דירוג (Spearman) בין התחזית לתוצאה")
-    rows = []
-    for lab, a, b in (("fc15 מול R", t.fc15, t.R), ("fc5 מול R", t.fc5, t.R),
-                      ("fc15 מול תשואה", t.fc15, t.ret),
-                      ("fc15 מול מומנטום 126 יום", t.fc15, [mom[s, k] for s, k in zip(t.s, t.k)]),
-                      ("fc15 מול תשואת 5 ימים אחרונים", t.fc15, [past5[s, k] for s, k in zip(t.s, t.k)])):
-        r, tt, n = spearman(a, b)
-        rows.append({"בדיקה": lab, "rho": round(r, 3), "t": round(tt, 2), "n": n})
-    print(pd.DataFrame(rows).to_string(index=False))
-    out["rho_R"] = rows[0]["rho"]; out["rho_t"] = rows[0]["t"]
-
-    print("\n== R לעסקה לפי כיוון התחזית ל-15 יום")
-    rows = [{"קבוצה": "הכול", **group(t)},
-            {"קבוצה": "Kronos צופה עלייה", **group(t[t.fc15 > 0])},
-            {"קבוצה": "Kronos צופה ירידה", **group(t[t.fc15 <= 0])}]
-    q = pd.qcut(t.fc15.rank(method="first"), 3, labels=["שליש תחתון", "שליש אמצעי", "שליש עליון"])
-    rows += [{"קבוצה": str(g), **group(t[q == g])} for g in q.cat.categories]
-    g = pd.DataFrame(rows)
-    print(g.round(3).to_string(index=False))
-    up, dn = t[t.fc15 > 0], t[t.fc15 <= 0]
-    out.update(up_n=len(up), up_R=up.R.mean(), dn_n=len(dn), dn_R=dn.R.mean(), all_R=t.R.mean())
-
-    # סינון אקראי באותו גודל: כמה פעמים מקרה עושה טוב כמו Kronos
-    if 0 < len(up) < len(t):
-        rng = np.random.default_rng(SEED)
-        rnd = np.array([t.R.to_numpy()[rng.choice(len(t), len(up), replace=False)].mean()
-                        for _ in range(RANDOM_RUNS)])
-        p = (rnd >= up.R.mean()).mean()
-        out["p_random"] = p
-        print(f"\nסינון אקראי של {len(up)} מתוך {len(t)} עסקאות, {RANDOM_RUNS} פעמים: "
-              f"R ממוצע {rnd.mean():.3f}, ב-{p * 100:.1f}% מהפעמים טוב לפחות כמו Kronos ({up.R.mean():.3f})")
-
-    print("\n== תיק (0.5% סיכון, 15 מקומות) בחלון הבדיקה")
-    fc = np.full(d.C.shape, np.nan)
-    fc[t.s.to_numpy(), t.k.to_numpy()] = t.fc15.to_numpy()
-    rows = [{"תיק": "הכלל כמו היום (דירוג מומנטום)", **book(d, t, mom)},
-            {"תיק": "רק עסקאות ש-Kronos צופה להן עלייה", **book(d, up, mom)},
-            {"תיק": "כל העסקאות, דירוג לפי Kronos", **book(d, t, fc)}]
-    print(pd.DataFrame(rows).round(2).to_string(index=False))
-    out["books"] = rows
-    return out
+def report(name, df):
+    df = realized(df.dropna(subset=["p20"]).copy())
+    print(f"\n== {name}: {len(df)} תחזיות, {df.day.nunique()} ימים, {df.day.min().date()} עד {df.day.max().date()}")
+    for k in (1, 5, 20):
+        ics = df.groupby("day").apply(lambda g: g[f"p{k}"].rank().corr(g[f"x{k}"].rank()) if len(g) >= 5 else np.nan,
+                                      include_groups=False).dropna()
+        t = ics.mean() / ics.std() * np.sqrt(len(ics)) if len(ics) > 2 else np.nan
+        q = df.groupby("day")[f"p{k}"].transform(lambda s: s.rank(pct=True))
+        top, bot = df[q > 0.5][f"x{k}"].mean(), df[q <= 0.5][f"x{k}"].mean()
+        pos, neg = df[df[f"p{k}"] > 0][f"x{k}"].mean(), df[df[f"p{k}"] <= 0][f"x{k}"].mean()
+        npos = (df[f"p{k}"] > 0).mean()
+        print(f"יום {k:2d}: IC יומי {ics.mean():+.3f} (t={t:+.2f}, {len(ics)} ימים) | "
+              f"חצי עליון {top*100:+.2f}% מול תחתון {bot*100:+.2f}% (מעבר ל-SPY) | "
+              f"תחזית חיובית ({npos:.0%}) {pos*100:+.2f}% מול שלילית {neg*100:+.2f}%")
 
 
-def main(argv=None) -> int:
+def main():
     sys.stdout.reconfigure(encoding="utf-8")
-    pd.set_option("display.width", 250)
-    ap = argparse.ArgumentParser()
-    ap.add_argument("cache", nargs="?", default="variants_cache")
-    ap.add_argument("--since", default="2025-09-01", help="רק אותות מהתאריך הזה (אחרי סוף האימון של המודל)")
-    ap.add_argument("--model", default="NeoQuasar/Kronos-small")
-    ap.add_argument("--tokenizer", default="NeoQuasar/Kronos-Tokenizer-base")
-    ap.add_argument("--repo", default=None, help="תיקיית הקוד של Kronos (ברירת מחדל: <cache>/Kronos)")
-    a = ap.parse_args(argv)
-    cache = Path(a.cache)
-
-    d = Data(cache)
-    b = pd.read_pickle(cache / "bars.pkl.gz")
-    f = lambda k: b[k].reindex(index=d.idx, columns=d.cols).astype("float64")
-    C, H, L, V = f("close"), f("high"), f("low"), f("volume")
-    mom = swing.indicators(C, H, L, V)["mom"].to_numpy()
-    past5 = (C / C.shift(5) - 1).to_numpy()
-    print(f"נתונים: {len(d.cols)} מניות, {d.idx[0].date()} עד {d.idx[-1].date()}")
-
-    t = trades(d, swing.signals(C, H, L, V).to_numpy())
-    since = pd.Timestamp(a.since)
-    # רק אותות אחרי סוף האימון, ורק עסקאות שהספיקו 15 ימי מסחר (או נעצרו)
-    t = t[(d.idx[t.s] >= since) & ((t.e + HORIZON - 1 < len(d.idx)) | (t.x < len(d.idx) - 1))]
-    t = t.reset_index(drop=True)
-    print(f"אותות סווינג מ-{since.date()}: {len(t)}")
-    if t.empty:
-        print("אין עסקאות בחלון. צריך לבנות מחדש את המטמון (variants_build.py) עם נתונים עדכניים.")
-        return 1
-
-    predictor = load_predictor(Path(a.repo) if a.repo else cache / "Kronos", a.model, a.tokenizer)
-    tag = f"{a.model}|{LOOKBACK}|{SAMPLES}"
-    t = forecast(d, V.to_numpy(), t, predictor, cache / "kronos_preds.csv", tag)
-    report(d, t, mom, past5)
-    return 0
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "eval"
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    if cmd == "fetch":
+        fetch()
+    elif cmd == "predict":
+        run(signal_jobs(), OUT / "pred_signals.csv", limit=limit)
+    elif cmd == "sample":
+        run(sample_jobs(), OUT / "pred_sample.csv", limit=limit)
+    else:
+        for nm, f in (("אותות סווינג", "pred_signals.csv"), ("מניות אקראיות", "pred_sample.csv")):
+            if (OUT / f).exists():
+                report(nm, pd.read_csv(OUT / f, parse_dates=["day"]))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
