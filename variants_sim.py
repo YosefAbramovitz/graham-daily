@@ -216,7 +216,7 @@ def run_portfolio(d: Data, v: Variant, start_cash=100_000.0):
         # יציאות שחלות היום
         keep = []
         for p in pos:
-            while p["legs"] and p["legs"][0][0] == j:
+            while p["legs"] and p["legs"][0][0] <= j:   # כולל יציאה ביום הכניסה עצמו (יעד שהושג מיד)
                 _, f, px = p["legs"].pop(0)
                 cash += p["sh"] * f * px * (1 - COST)
             (keep if p["legs"] else trades).append(p)

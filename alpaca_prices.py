@@ -34,12 +34,13 @@ from __future__ import annotations
 import os
 import time
 from datetime import date
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
 
 BARS_URL = "https://data.alpaca.markets/v2/stocks/bars"
+CA_URL = "https://data.alpaca.markets/v1/corporate-actions"
 BATCH = 100          # כמה סימולים בבקשה אחת
 PAGE_LIMIT = 10_000  # שורות לעמוד
 FIRST_YEAR = 2016    # תחילת הנתונים בחשבון החינמי
@@ -103,6 +104,53 @@ def _fetch_batch(symbols: List[str], start: date, end: date,
         page_token = payload.get("next_page_token")
         if not page_token:
             return out
+
+
+def splits(symbols: Iterable[str], start: date, end: date) -> Dict[str, List[Tuple[date, float]]]:
+    """פיצולים (רגילים והפוכים): {סימול: [(יום אקס, יחס)]}. יחס 4 = כל מניה הפכה לארבע.
+
+    הנרות מותאמים לכל הפיצולים עד היום, אבל מספר המניות ב-SEC הוא כפי שדווח. בלי תיקון
+    לפי הפיצולים, מניה שהתפצלה אחר כך מקבלת בעבר שווי שוק קטן פי היחס ונראית זולה -
+    הצצה קדימה לטובת מניות שעלו (נמצא בספט' 2026: כמחצית מ-15 ה"זולות" בבדיקות היו כאלה).
+    """
+    if not available():
+        return {}
+    syms = sorted({str(s).strip().upper() for s in symbols if str(s).strip()})
+    out: Dict[str, List[Tuple[date, float]]] = {}
+    for i in range(0, len(syms), 50):
+        chunk = [s.replace("-", ".") for s in syms[i:i + 50]]
+        token = None
+        for _ in range(100):
+            params = {"symbols": ",".join(chunk), "types": "forward_split,reverse_split",
+                      "start": start.isoformat(), "end": end.isoformat(), "limit": 1000}
+            if token:
+                params["page_token"] = token
+            try:
+                r = requests.get(CA_URL, headers=_headers(), params=params, timeout=45)
+            except requests.RequestException:
+                break
+            if r.status_code == 429:
+                time.sleep(2.0)
+                continue
+            if r.status_code != 200:
+                break
+            try:
+                payload = r.json()
+            except ValueError:
+                break
+            ca = payload.get("corporate_actions") or {}
+            for kind in ("forward_splits", "reverse_splits"):
+                for x in ca.get(kind) or []:
+                    try:
+                        ratio = float(x["new_rate"]) / float(x["old_rate"])
+                        ex = date.fromisoformat(str(x["ex_date"])[:10])
+                    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+                        continue
+                    out.setdefault(str(x.get("symbol", "")).replace(".", "-"), []).append((ex, ratio))
+            token = payload.get("next_page_token")
+            if not token:
+                break
+    return out
 
 
 def daily_closes(symbols: Iterable[str], start: date, end: date,

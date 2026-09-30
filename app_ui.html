@@ -172,7 +172,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     <summary><h2>מועמדות מהמסך</h2><span class="pill" id="c-watch">…</span>
       <span class="sm">מי שעבר את גראהם ואת שלב האיכות<span id="watch-asof"></span></span>
       <button class="btn primary" onclick="event.preventDefault(); askPlan('graham')"
-              title="עד 15 מניות במשקל שווה, הזולות קודם, עם יעד +50%">קנייה חודשית</button></summary>
+              title="עד 15 מניות במשקל שווה, הזולות קודם, עם יעד +50% או שנה אחרי הקנייה">קנייה חודשית</button></summary>
     <div class="bulk" id="bulk" hidden>
       <b id="bulkn">0</b>
       <div class="fld"><label>קנייה לפי</label>
@@ -192,7 +192,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     <div class="card"><table>
       <thead><tr><th class="ck"><input type="checkbox" id="ckall" title="סמן הכול" onchange="bulkAll(this.checked)"></th>
         <th>סימול</th><th>שם</th><th>איתות</th><th>מחיר</th><th>ATR</th><th>איכות</th>
-        <th title="דירוג לפי תשואת הרווח התפעולי (EBIT/EV) מכל הרשימה. 15 הזולות מסומנות: בבדיקה לאחור 2017-2025 הן הניבו יותר מהשאר בכל שנה">זולה</th></tr></thead>
+        <th title="דירוג לפי תשואת הרווח התפעולי (EBIT/EV) מכל הרשימה, 15 הזולות מסומנות. אחרי תיקון הטיית הפיצולים (אוקטובר 2026) לא נמצא להן יתרון על שאר העוברים - זה סדר קנייה, לא סימן איכות">זולה</th></tr></thead>
       <tbody id="watch"><tr><td colspan="8" class="empty">טוען…</td></tr></tbody>
     </table></div>
   </details>
@@ -1095,7 +1095,7 @@ async function askPlan(kind){
     </tbody></table>
     <div class="row"><span>${P.length} פקודות, סך הכול</span><b>${total.toFixed(0)}$ מתוך מזומן ${d.cash != null ? d.cash.toFixed(0) + "$" : "—"}</b></div>
     <p class="sm" style="margin:8px 0 0">${kind === "swing" ? `קנייה בשוק עם סטופ צמוד (GTC). יציאה ביום ה-${((SW || {}).rules || {}).hold_days || 20} - תזכורת בטלגרם ו'מכור עכשיו'.`
-      : kind === "graham" ? "limit קרוב למחיר עם יעד +50% (GTC). יציאה בסוף השנה השנייה לפי הכלל."
+      : kind === "graham" ? "limit קרוב למחיר עם יעד +50% (GTC). יציאה שנה אחרי הקנייה אם היעד לא הושג."
       : "קנייה בשוק, להחזקה."}</p>`,
     "BUY", `שלח ${P.length} פקודות`, PLAN_TITLE[kind]);
 }

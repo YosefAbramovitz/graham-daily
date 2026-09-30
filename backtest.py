@@ -51,9 +51,28 @@ STABILITY_YEARS = 5          # כמה שנים של רווח חיובי נדרש
 # חישוב הקריטריונים בתאריך נתון
 # ---------------------------------------------------------------------------
 
+def split_factor(splits, snap: dict) -> float:
+    """המחירים מותאמים לכל הפיצולים עד היום, ומספר המניות הוא כפי שדווח בתאריך המאזן.
+    כדי ששווי השוק יהיה נכון, מכפילים במכפלת הפיצולים שאחרי תאריך המאזן."""
+    if not splits:
+        return 1.0
+    pe = (snap.get("_period_ends", {}).get("shares_outstanding") or [None])[0]
+    if not pe:
+        return 1.0
+    pe = date.fromisoformat(str(pe)[:10])
+    f = 1.0
+    for d, r in splits:
+        if d > pe and r and r > 0:
+            f *= r
+    return f
+
+
 def metrics_at(compact: Dict[str, List[dict]], when: date,
-               price: Optional[float]) -> Optional[dict]:
-    """מחשב את מדדי המסך מנתונים שהיו ידועים בתאריך ``when``."""
+               price: Optional[float], splits=None) -> Optional[dict]:
+    """מחשב את מדדי המסך מנתונים שהיו ידועים בתאריך ``when``.
+
+    ``price`` מותאם לפיצולים עד היום (כמו כל מקורות המחירים); ``splits`` = [(יום, יחס)]
+    של המניה, כדי לתקן את מספר המניות שדווח לפני פיצול."""
     snap = sf.as_of(compact, when, years=STABILITY_YEARS + 1)
     history = snap.get("_history", {})
 
@@ -68,7 +87,7 @@ def metrics_at(compact: Dict[str, List[dict]], when: date,
     if not price or not shares or not assets:
         return None
 
-    market_cap = price * shares
+    market_cap = price * shares * split_factor(splits, snap)
     debt = sf.total_debt(val) or 0.0
     liquid = (val("cash") or 0.0) + (val("short_term_investments") or 0.0)
     ev = market_cap + debt - liquid
@@ -267,6 +286,19 @@ def run(tickers: List[str], start_year: int, end_year: int,
             f"רק {with_prices} מתוך {len(tickers)} מניות קיבלו מחירים. "
             "זה נמוך מכדי להסיק משהו - בדוק את מקור המחירים לפני שתסמוך על התוצאה.")
 
+    # פיצולים: בלעדיהם מניה שהתפצלה אחר כך נראית בעבר זולה פי יחס הפיצול
+    split_map: Dict[str, list] = {}
+    try:
+        import alpaca_prices
+        if alpaca_prices.available():
+            split_map = alpaca_prices.splits(tickers, dates[0] - timedelta(days=800), date.today())
+    except ImportError:
+        pass
+    if not quiet:
+        print(f"פיצולים: {sum(len(v) for v in split_map.values())} ב-{len(split_map)} מניות"
+              + ("" if split_map else " - [אזהרה] בלי מפתח Alpaca אין תיקון פיצולים, "
+                 "ושווי השוק של מניות שהתפצלו אחר כך קטן מדי"), flush=True)
+
     cik_map = sf.ticker_to_cik(quiet=quiet)
     if not cik_map:
         raise RuntimeError(
@@ -313,7 +345,7 @@ def run(tickers: List[str], start_year: int, end_year: int,
             ret = p1 / p0 - 1.0
             universe_returns.append(ret)
 
-            m = metrics_at(compact, buy, p0)
+            m = metrics_at(compact, buy, p0, split_map.get(tk))
             if not m:
                 continue
             scored += 1

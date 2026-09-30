@@ -71,7 +71,7 @@ DATA_BASE = "https://data.alpaca.markets"
 # אותם מספרים בדיוק כמו בדף. גראהם קובע את היעד ואת השעון, ATR את הסטופ.
 PROFIT_TARGET = 0.50
 ATR_STOP_MULT = 2.0
-HOLD_YEARS = 2
+HOLD_DAYS = 365      # שנה אחרי הקנייה (עד ספט' 2026: סוף השנה הקלנדרית השנייה)
 FALLBACK_STOP_PCT = 0.15
 MAX_ENTRY_ABOVE_MARKET = 0.03   # כמו במסך: מעל זה, כנראה טעות הקלדה או מחיר ישן
 
@@ -162,7 +162,7 @@ def atr_pct_for(symbol: str) -> Optional[float]:
 
 
 def deadline_for(entry: date) -> date:
-    return date(entry.year + HOLD_YEARS, 12, 31)
+    return date.fromordinal(entry.toordinal() + HOLD_DAYS)
 
 
 def levels(entry: float, atr_pct: Optional[float]) -> dict:

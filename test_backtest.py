@@ -62,6 +62,16 @@ def test_market_cap_and_enterprise_value():
     assert abs(m["ebit_ev"] - 1e9 / 6e9) < 1e-9
 
 
+def test_market_cap_adjusts_for_later_splits():
+    f = make_facts(shares=1e8)
+    # המחיר מותאם לפיצול 1:4 שקרה ב-2025: רבע מהמחיר של אז. מספר המניות כפי שדווח
+    m = bt.metrics_at(f, date(2024, 6, 30), price=12.5, splits=[(date(2025, 3, 1), 4.0)])
+    assert m["market_cap"] == 5e9
+    # פיצול לפני תאריך המאזן כבר כלול במספר המניות שדווח
+    m2 = bt.metrics_at(f, date(2024, 6, 30), price=50.0, splits=[(date(2020, 3, 1), 4.0)])
+    assert m2["market_cap"] == 5e9
+
+
 def test_gross_profitability_and_payout():
     f = make_facts(gross=3e9, assets=1e10, div=3e8, buy=2e8, shares=1e8)
     m = bt.metrics_at(f, date(2024, 6, 30), price=50.0)

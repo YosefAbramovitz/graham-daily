@@ -395,9 +395,9 @@ function grahamCell(r){
 // מכך שמניה תנודתית זזה 3% ביום רגיל ומניה רגועה לא.
 const PROFIT_TARGET = 0.50;
 const ATR_STOP_MULT = 2.0;
-const HOLD_YEARS = 2;
+const HOLD_DAYS = 365;   // שנה אחרי הקנייה (עד ספט' 2026: סוף השנה השנייה)
 
-function deadlineFor(d){ return new Date(Date.UTC(d.getUTCFullYear()+HOLD_YEARS, 11, 31)); }
+function deadlineFor(d){ return new Date(d.getTime() + HOLD_DAYS * 86400000); }
 function iso(d){ return d.toISOString().slice(0,10); }
 
 function buyCell(r){
@@ -605,7 +605,9 @@ ACTION_CLASS = {
 POSITIONS_LEAD = (
     "כלל המכירה של גראהם, מתוך ראיון שנתן ל-Medical Economics ב-1976: למכור "
     "כשהרווח מגיע ל-50%, ואם לא הגיע — עד סוף השנה הקלנדרית השנייה שאחרי "
-    "הקנייה, מה שקורה קודם. הכלל נראה שרירותי, וזה העניין: הוא מונע משתי "
+    "הקנייה, מה שקורה קודם. אצלנו, מאוקטובר 2026, המועד הוא שנה אחרי הקנייה "
+    "(כמו אצל Greenblatt): בבדיקה המתוקנת זה היה טוב יותר בשתי התקופות. "
+    "הכלל נראה שרירותי, וזה העניין: הוא מונע משתי "
     "הטעויות שהכי עולות כסף, להתאהב במניה שעלתה ולהחזיק לנצח במניה שלא זזה. "
     "זו התראה בלבד, וההחלטה שלך."
 )

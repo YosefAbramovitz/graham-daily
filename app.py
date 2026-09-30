@@ -102,7 +102,7 @@ DATA_BASE = "https://data.alpaca.markets"
 
 PROFIT_TARGET = 0.50
 ATR_STOP_MULT = 2.0
-HOLD_YEARS = 2
+HOLD_DAYS = 365      # גראהם: יעד +50% או שנה אחרי הקנייה (עד ספט' 2026: סוף השנה השנייה)
 FALLBACK_STOP_PCT = 0.15
 # כמה מעל המחיר בשוק מותר להציע בקנייה, לפני שהשרת מסרב (טעות הקלדה, מחיר ישן)
 MAX_ENTRY_ABOVE_MARKET = 0.03
@@ -446,7 +446,7 @@ def api(method: str, url: str, **kw):
 # ---------------------------------------------------------------------------
 
 def deadline_for(d: date) -> date:
-    return date(d.year + HOLD_YEARS, 12, 31)
+    return date.fromordinal(d.toordinal() + HOLD_DAYS)
 
 
 def levels(entry: float, atr_pct: Optional[float]) -> dict:

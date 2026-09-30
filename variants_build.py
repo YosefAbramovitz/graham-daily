@@ -82,7 +82,7 @@ def bars(symbols, start: date, end: date) -> dict:
 def _screen_chunk(job):
     """קבוצת מניות על כל התאריכים. כל עובד טוען רק את הדוחות של הקבוצה שלו,
     אחרת כל תהליך מחזיק את כל הדוחות בזיכרון ונגמר הזיכרון."""
-    tickers, prices = job           # prices: {date: {ticker: price}}
+    tickers, prices, spl = job      # prices: {date: {ticker: price}}, spl: {ticker: [(יום, יחס)]}
     cik = sf.ticker_to_cik()
     out = []
     for tk in tickers:
@@ -93,7 +93,7 @@ def _screen_chunk(job):
             px = row.get(tk)
             if px is None:
                 continue
-            m = metrics_at(comp, d, px)
+            m = metrics_at(comp, d, px, spl.get(tk))
             if m and passes_screen(m)[0]:
                 out.append((d.isoformat(), tk, round(m["ebit_ev"] or 0.0, 4)))
     return out
@@ -169,9 +169,12 @@ def main() -> int:
     facts.clear()                     # העובדים טוענים לבד; לשחרר זיכרון
     prices = {d: {tk: float(v) for tk, v in close.loc[pd.Timestamp(d)].items() if not pd.isna(v)}
               for d in dates}
+    split_map = ap.splits(names, start - timedelta(days=800), date.today())
+    print(f"פיצולים: {sum(len(v) for v in split_map.values())} ב-{len(split_map)} מניות", flush=True)
     size = 30
     jobs = [(names[i:i + size], {d: {t: r[t] for t in names[i:i + size] if t in r}
-                                 for d, r in prices.items()})
+                                 for d, r in prices.items()},
+             {t: split_map[t] for t in names[i:i + size] if t in split_map})
             for i in range(0, len(names), size)]
     cands = {d.isoformat(): [] for d in dates}
     with mp.Pool(max(1, min(8, (os.cpu_count() or 2) - 4))) as pool:
