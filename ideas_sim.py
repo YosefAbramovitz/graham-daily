@@ -89,7 +89,7 @@ def portfolio(d, t, score, rng=None):
     for j in range(start, len(d.idx)):
         keep = []
         for p in pos:
-            if p["x"] == j:
+            if p["x"] <= j:           # כולל עסקה שנעצרה ביום הכניסה (x == יום הכניסה)
                 cash += p["amt"] * (1 + p["ret"])
             else:
                 keep.append(p)

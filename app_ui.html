@@ -202,8 +202,9 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
       <span class="sm" id="swing-asof"></span></summary>
     <div class="card swinghead">
       <p class="sm" style="margin:0 0 6px"><b>הכלל שעבר את הבדיקה לאחור:</b> מניה במגמה עולה (מעל ממוצע 200,
-        וממוצע 50 מעל 200) שירדה ל-RSI(14) מתחת ל-35, כש-SPY מעל ממוצע 200. כניסה למחרת, סטופ 1.5 ATR,
-        בלי יעד, ויציאה בסגירה של יום המסחר ה-15. סיכון של 0.5% מהתיק לעסקה (פוזיציה ממוצעת כ-13% מהתיק), עד 20% בפוזיציה ועד 15 פוזיציות.</p>
+        וממוצע 50 מעל 200) שירדה ל-RSI(14) מתחת ל-35, כש-SPY מעל ממוצע 200. כניסה למחרת, סטופ 4 ATR,
+        בלי יעד, ויציאה בסגירה של יום המסחר ה-20. סיכון של 0.5% מהתיק לעסקה (פוזיציה ממוצעת כ-4% מהתיק), עד 20% בפוזיציה ועד 15 פוזיציות.
+        (עד ספט' 2026: סטופ 1.5 ATR ו-15 ימים. הבדיקה ברמת התיק תוקנה, והיציאה נבחרה מחדש.)</p>
       <p class="sm" style="margin:0" id="swing-bt"></p>
       <p class="sm" style="margin:6px 0 0"><b>ציון איכות (0-3):</b> מגמה חזקה, תיקון עמוק ומחזור נמוך בירידה.
         בבדיקה, עסקה עם ציון 3 הניבה בממוצע פי 2.5 מאות רגיל, וציון 0-1 הפסיד — אבל העדפה של ציון 3
@@ -1022,8 +1023,10 @@ async function loadSwing(){
       ? `אותות מסגירת ${sc.as_of} · כניסה היום יוצאת עד ${SW.entry_exit_date}` : (SW.error || "");
     $("swing-bt").innerHTML = `בדיקה לאחור ${esc(bt.period)} (תקופה שלא שימשה לבחירת הכלל): ${bt.trades} עסקאות,
       ${Math.round(bt.win*100)}% מצליחות, בממוצע ${pct(bt.avg_ret)} לעסקה (${bt.exp_r}R) ב-${bt.days} ימים.
-      תיק לפי הכלל: ${pct(bt.cagr)} בשנה, ירידה מקסימלית ${pct(bt.maxdd)} — בערך כמו SPY באותה תקופה
-      (${pct(bt.spy_cagr)}, ירידה ${pct(bt.spy_maxdd)}). היתרון קטן, ובחמש מעשר השנים (2018, 2020, 2022, 2023, 2025) העסקאות הפסידו בממוצע.`;
+      <br><b>תיק לפי הכלל: ${pct(bt.cagr)} בשנה, ירידה מקסימלית ${pct(bt.maxdd)} — פחות מ-SPY
+      (${pct(bt.spy_cagr)}, ירידה ${pct(bt.spy_maxdd)}).</b> ב-2016-20: ${pct(bt.is_cagr)} מול ${pct(bt.spy_is_cagr)}.
+      על הרכב S&P 500 ההיסטורי (כולל מניות שיצאו מהמדד) התוחלת לעסקה יורדת לכ-${bt.pit_exp_r}R.
+      התוחלת לעסקה חיובית והירידות קטנות משל SPY, אבל התשואה נמוכה מקנייה והחזקה של SPY.`;
     const mk = sc.market_ok;
     $("swing-mkt").className = "pill " + (mk === false ? "no" : mk ? "ok" : "");
     $("swing-mkt").textContent = mk === false ? "SPY מתחת לממוצע 200 — אין כניסות חדשות"
@@ -1062,12 +1065,12 @@ function askSwing(t){
     ${r.quality != null && r.quality <= 1 ? `<p class="sm" style="margin:6px 0;color:var(--bad-ink)">ציון איכות ${r.quality}: אותות כאלה הפסידו בממוצע בבדיקה לאחור, בשתי התקופות.</p>` : ""}
     <div class="row"><span>מניות</span><b>${S.qty}</b></div>
     <div class="row"><span>כניסה, limit (GTC)</span><b>${S.entry.toFixed(2)}</b></div>
-    <div class="row"><span>סטופ (1.5 ATR)</span><b>${S.stop.toFixed(2)}</b></div>
+    <div class="row"><span>סטופ (${SW.rules.stop_atr} ATR)</span><b>${S.stop.toFixed(2)}</b></div>
     <div class="row"><span>עלות משוערת</span><b>${(S.entry*S.qty).toFixed(2)}$</b></div>
     <div class="row"><span>סיכון עד הסטופ</span><b>${S.risk.toFixed(2)}$</b></div>
     <div class="row"><span>יציאה לפי זמן, בסגירה של</span><b>${esc(SW.entry_exit_date)}</b></div>
     <p class="sm" style="margin:10px 0 0">בלי יעד רווח. אם הקנייה לא מתבצעת היום, בטל אותה בטבלת הפקודות —
-      הבדיקה לאחור נכנסה רק למחרת האות. היציאה לפי זמן לא אוטומטית: ביום ה-15 לחץ "מכור עכשיו".</p>`,
+      הבדיקה לאחור נכנסה רק למחרת האות. היציאה לפי זמן לא אוטומטית: ביום ה-${SW.rules.hold_days} לחץ "מכור עכשיו".</p>`,
     "BUY", "שלח קנייה", "קניית סווינג");
 }
 async function switchAcct(id){
@@ -1091,7 +1094,7 @@ async function askPlan(kind){
       <td class="num">${p.value.toFixed(0)}$</td><td class="num">${p.pct ?? "—"}%</td></tr>`).join("")}
     </tbody></table>
     <div class="row"><span>${P.length} פקודות, סך הכול</span><b>${total.toFixed(0)}$ מתוך מזומן ${d.cash != null ? d.cash.toFixed(0) + "$" : "—"}</b></div>
-    <p class="sm" style="margin:8px 0 0">${kind === "swing" ? "קנייה בשוק עם סטופ צמוד (GTC). יציאה ביום ה-15 - תזכורת בטלגרם ו'מכור עכשיו'."
+    <p class="sm" style="margin:8px 0 0">${kind === "swing" ? `קנייה בשוק עם סטופ צמוד (GTC). יציאה ביום ה-${((SW || {}).rules || {}).hold_days || 20} - תזכורת בטלגרם ו'מכור עכשיו'.`
       : kind === "graham" ? "limit קרוב למחיר עם יעד +50% (GTC). יציאה בסוף השנה השנייה לפי הכלל."
       : "קנייה בשוק, להחזקה."}</p>`,
     "BUY", `שלח ${P.length} פקודות`, PLAN_TITLE[kind]);

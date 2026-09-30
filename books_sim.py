@@ -41,7 +41,7 @@ def portfolio(d, t, score, month_stop=None):
             cur_month, month_ref, blocked = m, last_val, False
         keep = []
         for p in pos:
-            if p["x"] == j:
+            if p["x"] <= j:           # כולל עסקה שנעצרה ביום הכניסה (x == יום הכניסה)
                 cash += p["amt"] * (1 + p["ret"])
             else:
                 keep.append(p)
