@@ -22,11 +22,13 @@
 השרת מאזין אז גם מחוץ למחשב, אבל מקבל רק שני סוגי כתובות: המחשב עצמו,
 וכתובות של רשת פנימית (10.x, ‏172.16-31.x, ‏192.168.x). כל כתובת אחרת מקבלת
 403. ברשת הפנימית נדרש גם טוקן, כי כל מכשיר באותו Wi-Fi (אורחים, מכשירים
-חכמים) יכול להגיע לשרת, ומהמסך אפשר לשלוח פקודות. הטוקן נוצר בהפעלה
-הראשונה, נשמר ב-.env בשם APP_TOKEN, והשרת מדפיס כתובת שמכילה אותו. פותחים
-אותה פעם אחת בטלפון, והמכשיר נרשם כמאושר (devices.json, עוגייה לעשר שנים):
-מעכשיו הוא נכנס בלי טוקן. את המכשירים המאושרים רואים ומוחקים בחלון "מכשירים
-מאושרים" במסך. מחיקת devices.json מבטלת את כולם. מהמחשב עצמו לא נדרש טוקן.
+חכמים) יכול להגיע לשרת, ומהמסך אפשר לשלוח פקודות. בכל שליחה של קישור (בכל
+הפעלה, ובפקודה /link בבוט) נוצר טוקן חדש, והקודמים בטלים (link_tokens.json).
+פותחים את הקישור פעם אחת בטלפון, והמכשיר נרשם כמאושר (devices.json, עוגייה
+לעשר שנים): מעכשיו הוא נכנס בלי טוקן. מכשיר מאושר שנכנס עם קישור ישן מוסר
+מהמאושרים עד שייכנס עם הקישור האחרון. את המכשירים המאושרים רואים ומוחקים
+בחלון "מכשירים מאושרים" במסך. מחיקת devices.json מבטלת את כולם. מהמחשב עצמו
+לא נדרש טוקן.
 
 בכל הפעלה עם --lan הקישור נשלח גם לטלגרם, אם ב-.env מוגדרים
 TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. את ה-chat_id
@@ -48,7 +50,7 @@ TELEGRAM_BOT_TOKEN (בוט שיוצרים ב-@BotFather) ו-TELEGRAM_CHAT_ID. א
 בהפעלה הראשונה ווינדוס עשוי לשאול אם לאפשר לפייתון גישה לרשת: לאשר לרשת
 פרטית בלבד.
 
-להחלפת הטוקן: למחוק את השורה APP_TOKEN מ-.env ולהפעיל מחדש.
+להחלפת הטוקן: /link בבוט, או הפעלה מחדש.
 
 מפתחות: קובץ ``.env`` בתיקייה הזאת, שתי שורות::
 
@@ -85,7 +87,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from flask import (Flask, has_request_context, jsonify, redirect, request,
+from flask import (Flask, has_request_context, jsonify, make_response, redirect, request,
                    send_from_directory)
 
 import plans
@@ -147,20 +149,56 @@ def is_lan(value: str) -> bool:
     return bool(ip and any(ip.version == net.version and ip in net for net in LAN_NETS))
 
 
-def ensure_token() -> str:
-    """הטוקן מ-.env, או טוקן חדש שנשמר שם כדי שיישאר קבוע בין הפעלות."""
-    load_env()
-    tok = os.environ.get("APP_TOKEN", "").strip()
-    if tok:
-        return tok
-    tok = secrets.token_urlsafe(24)
-    path = HERE / ".env"
-    prev = path.read_text(encoding="utf-8") if path.exists() else ""
-    sep = "" if (not prev or prev.endswith("\n")) else "\n"
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(f"{sep}APP_TOKEN={tok}\n")
-    os.environ["APP_TOKEN"] = tok
+# טוקן חדש בכל קישור שנשלח. הטוקנים הקודמים נשמרים כגיבוב בלבד ב-link_tokens.json
+# (מחוץ ל-git), כדי לזהות כניסה עם קישור ישן: מכשיר מאושר שנכנס כך מוסר
+# מהמאושרים עד שייכנס עם הקישור האחרון.
+TOKENS_FILE = HERE / "link_tokens.json"
+OLD_TOKENS_KEEP = 200
+_token_lock = threading.Lock()
+
+
+def _token_hash(tok: str) -> str:
+    return hashlib.sha256(tok.encode()).hexdigest()
+
+
+def _load_tokens() -> dict:
+    try:
+        data = json.loads(TOKENS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def rotate_token() -> str:
+    """מייצר טוקן חדש, הופך את הנוכחי לישן, ושומר. מחזיר את החדש."""
+    global TOKEN
+    with _token_lock:
+        data = _load_tokens()
+        old = [h for h in data.get("old", []) if isinstance(h, str)]
+        # הטוקן הקבוע מהגרסה הקודמת (APP_TOKEN ב-.env) נחשב גם הוא ישן
+        load_env()
+        for prev in (data.get("current", ""), os.environ.get("APP_TOKEN", "").strip(), TOKEN):
+            if prev and _token_hash(prev) not in old:
+                old.append(_token_hash(prev))
+        tok = secrets.token_urlsafe(24)
+        data = {"current": tok, "old": old[-OLD_TOKENS_KEEP:], "issued": now_iso()}
+        tmp = TOKENS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        os.replace(tmp, TOKENS_FILE)
+        TOKEN = tok
     return tok
+
+
+def is_old_token(given: str) -> bool:
+    h = _token_hash(given)
+    return any(hmac.compare_digest(h, o) for o in _load_tokens().get("old", []) if isinstance(o, str))
+
+
+LINK_BASE = ""        # למשל https://host:5000/ ; נקבע ב-main
+
+
+def fresh_link() -> str:
+    return f"{LINK_BASE}?t={rotate_token()}"
 
 
 def lan_ip() -> Optional[str]:
@@ -258,6 +296,13 @@ def current_device() -> Optional[str]:
     return did if did and did in devices() else None
 
 
+def blank_page(status: int):
+    """דף ריק בלי שום הסבר: מי שלא מאושר לא לומד כלום על המסך או על הטוקן."""
+    resp = make_response("<!doctype html><title></title>", status)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 @app.before_request
 def guard():
     """במצב --lan: רק המחשב עצמו או הרשת הפנימית. מהרשת: מכשיר שאושר פעם אחת
@@ -268,23 +313,31 @@ def guard():
     if is_local(who):
         return None
     if not is_lan(who) and not PUBLIC:
-        return ("גישה רק מהמחשב עצמו או מהרשת הביתית.", 403,
-                {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(403)
     if request.path == "/ca.crt":            # תעודת ה-CA הפרטי: ציבורית, בלי טוקן
         return None
     if PUBLIC and not request.is_secure:
-        return ("רק דרך https.", 403, {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(403)
     given = request.args.get("t")
     if given is not None:
         if too_many_failures(who):
-            return ("יותר מדי ניסיונות שגויים. נסה שוב בעוד רבע שעה.", 429,
-                    {"Content-Type": "text/plain; charset=utf-8"})
-        if hmac.compare_digest(given, TOKEN):
+            return blank_page(429)
+        if TOKEN and hmac.compare_digest(given, TOKEN):
             if current_device():
                 return redirect(request.path)
             return approve_device(redirect(request.path))
+        if is_old_token(given):
+            # קישור ישן: מכשיר מאושר מוסר עד שייכנס עם הקישור האחרון. דף ריק, ולא נחשב ניחוש.
+            did = current_device()
+            if did:
+                del devices()[did]
+                save_devices()
+            resp = blank_page(401)
+            resp.delete_cookie(DEVICE_COOKIE)
+            resp.delete_cookie(COOKIE)
+            return resp
         record_failure(who)
-        return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(401)
     did = current_device()
     if did:
         d = devices()[did]
@@ -298,8 +351,7 @@ def guard():
         if request.method == "GET" and not request.path.startswith("/api/"):
             return approve_device(redirect(request.full_path.rstrip("?")))
         return None
-    return ("המכשיר לא מאושר. פתח פעם אחת את הקישור עם הטוקן (נשלח לטלגרם בהפעלה).", 401,
-            {"Content-Type": "text/plain; charset=utf-8"})
+    return blank_page(401)
 
 
 def device_key(did: str) -> str:
@@ -2239,7 +2291,7 @@ def summary_tick() -> None:
 
 
 TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham - תוכנית אחת; "
-           "/summary - סיכום היום.\nשום פקודה לא נשלחת בלי לחיצה על אישור.")
+           "/summary - סיכום היום; /link - קישור כניסה חדש למסך.\nשום פקודה לא נשלחת בלי לחיצה על אישור.")
 
 
 def tg_handle_message(msg: dict) -> None:
@@ -2247,6 +2299,12 @@ def tg_handle_message(msg: dict) -> None:
     if not chat or str((msg.get("chat") or {}).get("id", "")) != chat:
         return
     cmd = str(msg.get("text") or "").strip().split("@")[0].lower()
+    if cmd == "/link":
+        if not LINK_BASE:
+            tg_call("sendMessage", chat_id=chat, text="המסך לא רץ עם --lan או --public, אין קישור מהטלפון.")
+            return
+        tg_call("sendMessage", chat_id=chat, disable_web_page_preview=True, text=link_message(fresh_link()))
+        return
     if cmd == "/summary":
         ok, clock = api("GET", f"{base()}/v2/clock")
         day = str(clock.get("timestamp", ""))[:10] if ok else date.today().isoformat()
@@ -2300,6 +2358,11 @@ def _tg_poll_once() -> None:
                         text=f"שגיאה בטיפול בלחיצה/פקודה: {type(exc).__name__}: {exc}"[:500])
 
 
+def link_message(link: str, head: str = "קישור כניסה חדש למסך המסחר:") -> str:
+    return (f"{head}\n{link}\n\nהקישור מאפשר לשלוח פקודות. אל תעביר אותו הלאה.\n"
+            "כל קישור קודם בטל: מכשיר מאושר שייכנס עם קישור ישן יוסר עד שייכנס עם זה.")
+
+
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
     """שולח את קישור הכניסה לטלפון. מחזיר שורה להדפסה. לא זורק שגיאות."""
     load_env()
@@ -2310,8 +2373,7 @@ def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") ->
     chat = telegram_chat(bot)
     if not chat:
         return "טלגרם: לא מצאתי צ'אט. שלח לבוט הודעה כלשהי (למשל /start) והפעל מחדש."
-    text = (f"מסך המסחר עלה. לפתוח בטלפון, {where}:\n" + link +
-            "\n\nהקישור מאפשר לשלוח פקודות. אל תעביר אותו הלאה.")
+    text = link_message(link, f"מסך המסחר עלה. לפתוח בטלפון, {where}:")
     try:
         r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15,
                           json={"chat_id": chat, "text": text,
@@ -2411,7 +2473,7 @@ class _SafeStream:
 
 
 def main() -> int:
-    global LIVE, REMOTE, PUBLIC, TOKEN
+    global LIVE, REMOTE, PUBLIC, LINK_BASE
     sys.stdout, sys.stderr = _SafeStream(sys.stdout), _SafeStream(sys.stderr)
     LIVE = "--live" in sys.argv
     PUBLIC = "--public" in sys.argv
@@ -2428,13 +2490,12 @@ def main() -> int:
         print("*** מצב חשבון אמיתי. כסף אמיתי. ***\n")
 
     ctx = None
-    if REMOTE:
-        TOKEN = ensure_token()
     if PUBLIC:
         load_env()
         host, ctx = start_public(port)
         print(f"המסך רץ. במחשב הזה:  http://127.0.0.1:{LOCAL_PORT}")
-        link = f"https://{host}:{port}/?t={TOKEN}"
+        LINK_BASE = f"https://{host}:{port}/"
+        link = fresh_link()
         print("\nגישה מבחוץ (HTTPS, טוקן או מכשיר מאושר). פתח פעם אחת בכל מכשיר:")
         print(f"  {link}")
         print("  " + send_link_telegram(link, "מכל מקום"))
@@ -2444,11 +2505,12 @@ def main() -> int:
         ip = lan_ip()
         print("\nגישה מהטלפון (רשת ביתית בלבד, הטלפון על אותו Wi-Fi). פתח פעם אחת בטלפון:")
         if ip:
-            link = f"http://{ip}:{port}/?t={TOKEN}"
+            LINK_BASE = f"http://{ip}:{port}/"
+            link = fresh_link()
             print(f"  {link}")
             print("  " + send_link_telegram(link))
         else:
-            print(f"  http://<כתובת המחשב ברשת>:{port}/?t={TOKEN}")
+            print(f"  http://<כתובת המחשב ברשת>:{port}/?t={rotate_token()}")
             print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
     if REMOTE:
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
