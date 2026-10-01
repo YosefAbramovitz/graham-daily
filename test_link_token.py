@@ -25,12 +25,24 @@ def _tok(link: str) -> str:
     return link.split("?t=")[1]
 
 
+def _blank(r) -> bool:
+    return r.get_data(as_text=True) == "<!doctype html><title></title>"
+
+
+def test_unapproved_device_gets_blank_page(c):
+    app.fresh_link()
+    r = c.get("/", environ_base=LAN)
+    assert r.status_code == 401 and _blank(r)
+    r = c.get("/?t=nope", environ_base=LAN)
+    assert r.status_code == 401 and _blank(r)
+
+
 def test_each_link_is_new_and_old_one_stops_working(c):
     first = _tok(app.fresh_link())
     second = _tok(app.fresh_link())
     assert first != second and app.TOKEN == second
     r = c.get(f"/?t={first}", environ_base=LAN)
-    assert r.status_code == 401 and "ישן" in r.get_data(as_text=True)
+    assert r.status_code == 401 and _blank(r)
     assert not app.devices()
     r = c.get(f"/?t={second}", environ_base=LAN)
     assert r.status_code == 302 and len(app.devices()) == 1
@@ -43,7 +55,7 @@ def test_approved_device_with_old_link_is_removed_until_new_link(c):
     assert c.get("/api/devices", environ_base=LAN).status_code == 200   # מאושר, בלי טוקן
     second = _tok(app.fresh_link())
     r = c.get(f"/?t={first}", environ_base=LAN)                          # קישור ישן
-    assert r.status_code == 401 and "הוסר" in r.get_data(as_text=True)
+    assert r.status_code == 401 and _blank(r)
     assert not app.devices()
     assert c.get("/api/devices", environ_base=LAN).status_code == 401     # כבר לא מאושר
     assert c.get(f"/?t={second}", environ_base=LAN).status_code == 302   # הקישור החדש מחזיר

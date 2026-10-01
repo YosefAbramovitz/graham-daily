@@ -296,6 +296,13 @@ def current_device() -> Optional[str]:
     return did if did and did in devices() else None
 
 
+def blank_page(status: int):
+    """דף ריק בלי שום הסבר: מי שלא מאושר לא לומד כלום על המסך או על הטוקן."""
+    resp = make_response("<!doctype html><title></title>", status)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    return resp
+
+
 @app.before_request
 def guard():
     """במצב --lan: רק המחשב עצמו או הרשת הפנימית. מהרשת: מכשיר שאושר פעם אחת
@@ -306,35 +313,31 @@ def guard():
     if is_local(who):
         return None
     if not is_lan(who) and not PUBLIC:
-        return ("גישה רק מהמחשב עצמו או מהרשת הביתית.", 403,
-                {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(403)
     if request.path == "/ca.crt":            # תעודת ה-CA הפרטי: ציבורית, בלי טוקן
         return None
     if PUBLIC and not request.is_secure:
-        return ("רק דרך https.", 403, {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(403)
     given = request.args.get("t")
     if given is not None:
         if too_many_failures(who):
-            return ("יותר מדי ניסיונות שגויים. נסה שוב בעוד רבע שעה.", 429,
-                    {"Content-Type": "text/plain; charset=utf-8"})
+            return blank_page(429)
         if TOKEN and hmac.compare_digest(given, TOKEN):
             if current_device():
                 return redirect(request.path)
             return approve_device(redirect(request.path))
         if is_old_token(given):
-            # קישור ישן: מכשיר מאושר מוסר עד שייכנס עם הקישור האחרון. לא נחשב ניחוש.
+            # קישור ישן: מכשיר מאושר מוסר עד שייכנס עם הקישור האחרון. דף ריק, ולא נחשב ניחוש.
             did = current_device()
             if did:
                 del devices()[did]
                 save_devices()
-            resp = make_response(("הקישור הזה ישן. " + ("המכשיר הוסר מהמאושרים. " if did else "")
-                                  + "פתח את הקישור האחרון מהבוט (או שלח לו /link).", 401,
-                                  {"Content-Type": "text/plain; charset=utf-8"}))
+            resp = blank_page(401)
             resp.delete_cookie(DEVICE_COOKIE)
             resp.delete_cookie(COOKIE)
             return resp
         record_failure(who)
-        return ("טוקן שגוי.", 401, {"Content-Type": "text/plain; charset=utf-8"})
+        return blank_page(401)
     did = current_device()
     if did:
         d = devices()[did]
@@ -348,8 +351,7 @@ def guard():
         if request.method == "GET" and not request.path.startswith("/api/"):
             return approve_device(redirect(request.full_path.rstrip("?")))
         return None
-    return ("המכשיר לא מאושר. פתח את הקישור האחרון מהבוט (או שלח לו /link).", 401,
-            {"Content-Type": "text/plain; charset=utf-8"})
+    return blank_page(401)
 
 
 def device_key(did: str) -> str:
