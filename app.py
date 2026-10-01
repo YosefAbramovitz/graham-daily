@@ -2153,7 +2153,12 @@ def tg_handle_callback(cq: dict) -> None:
                 text="בוטל, לא נשלחו פקודות.")
         return
     tg_call("answerCallbackQuery", callback_query_id=cq["id"], text="שולח...")
-    tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=_execute(st))
+    try:
+        result = _execute(st)
+    except Exception as exc:  # noqa: BLE001 - שהמשתמש יראה מה קרה ולא כפתור שלא עושה כלום
+        result = f"שגיאה בשליחה: {type(exc).__name__}: {exc}\nבדוק במסך המסחר מה נשלח."
+    if not tg_call("editMessageText", chat_id=chat, message_id=st["msg"], text=result[:4000]):
+        tg_call("sendMessage", chat_id=chat, text=result[:4000])
 
 
 # ---------------------------------------------------------------------------
@@ -2262,12 +2267,24 @@ def tg_loop() -> None:
     if old:
         _tg["offset"] = old[-1]["update_id"] + 1
     while True:
+        try:
+            _tg_poll_once()
+        except Exception as exc:  # noqa: BLE001 - המאזין לא מת: אחרת כפתורי האישור מפסיקים לעבוד בשקט
+            try:
+                print(f"טלגרם: שגיאה במאזין ({type(exc).__name__}: {exc})", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(5)
+
+
+def _tg_poll_once() -> None:
+    if True:
         ups = tg_call("getUpdates", offset=_tg["offset"], timeout=50,
                       allowed_updates=["message", "callback_query"])
         if ups is None:
             print("טלגרם: getUpdates נכשל, מנסה שוב", flush=True)
             time.sleep(10)
-            continue
+            return
         for u in ups:
             _tg["offset"] = u["update_id"] + 1
             try:
@@ -2279,6 +2296,8 @@ def tg_loop() -> None:
                     tg_handle_message(u["message"])
             except Exception as exc:  # noqa: BLE001 - עדכון אחד שנכשל לא עוצר את המאזין
                 print(f"טלגרם: שגיאה בטיפול בעדכון ({type(exc).__name__}: {exc})", flush=True)
+                tg_call("sendMessage", chat_id=tg_chat(),
+                        text=f"שגיאה בטיפול בלחיצה/פקודה: {type(exc).__name__}: {exc}"[:500])
 
 
 def send_link_telegram(link: str, where: str = "על ה-Wi-Fi של הבית") -> str:
@@ -2369,8 +2388,31 @@ def start_public(port: int):
     return host, ctx
 
 
+class _SafeStream:
+    """פלט שלא זורק: אם קובץ הלוג נעלם (סנכרון Drive), הדפסה לא מפילה את התהליכון."""
+
+    def __init__(self, s):
+        self._s = s
+
+    def write(self, x):
+        try:
+            return self._s.write(x)
+        except (OSError, ValueError, AttributeError):
+            return 0
+
+    def flush(self):
+        try:
+            self._s.flush()
+        except (OSError, ValueError, AttributeError):
+            pass
+
+    def __getattr__(self, name):
+        return getattr(self._s, name)
+
+
 def main() -> int:
     global LIVE, REMOTE, PUBLIC, TOKEN
+    sys.stdout, sys.stderr = _SafeStream(sys.stdout), _SafeStream(sys.stderr)
     LIVE = "--live" in sys.argv
     PUBLIC = "--public" in sys.argv
     REMOTE = PUBLIC or "--lan" in sys.argv

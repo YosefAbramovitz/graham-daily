@@ -25,7 +25,7 @@ def _plan(kind):
 
 def _setup(calls, executed):
     os.environ["TELEGRAM_CHAT_ID"] = "42"
-    for pre in ("ALPACA_GRAHAM", "ALPACA_SWING", "ALPACA_SPY"):
+    for pre in ("ALPACA_GRAHAM", "ALPACA_SWING"):
         os.environ[f"{pre}_KEY_ID"] = "k"
         os.environ[f"{pre}_SECRET_KEY"] = "s"
     app._tg["pending"].clear()
@@ -104,10 +104,25 @@ def test_expired_and_unknown_token():
 
 def test_empty_plan_quiet():
     def body(calls, executed):
-        app.tg_offer("spy", quiet=True)
+        app.plan_for = lambda kind: {"plan": [], "reason": "אין מזומן"}
+        app.tg_offer("graham", quiet=True)
         assert not calls
-        app.tg_offer("spy")
+        app.tg_offer("graham")
         assert calls and "אין מזומן" in calls[0][1]["text"] and not app._tg["pending"]
+    _run(body)
+
+
+def test_execute_error_is_reported_not_silent():
+    def body(calls, executed):
+        app.tg_offer("graham")
+        tok = next(iter(app._tg["pending"]))
+
+        def boom(kind, want):
+            raise RuntimeError("בדיקה")
+        app.execute_plan = boom
+        app.tg_handle_callback(_cq(f"ok|{tok}"))
+        texts = [kw.get("text", "") for m, kw in calls if m in ("editMessageText", "sendMessage")]
+        assert any("שגיאה בשליחה" in t and "בדיקה" in t for t in texts)
     _run(body)
 
 

@@ -28,7 +28,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PORT = 5000
 LOCAL_PORT = 5001               # במצב --public: HTTP למחשב עצמו
-LOG = HERE / "app.log"
+# מחוץ ל-Google Drive: הסנכרון של Drive החליף את הקובץ באמצע, והשרת המשיך לכתוב לקובץ
+# שכבר לא קיים - כל ההדפסות נכשלו והמאזין לטלגרם מת בשקט (אוקטובר 2026).
+LOG = Path(os.environ.get("LOCALAPPDATA") or HERE) / "graham-daily" / "app.log"
+LOG.parent.mkdir(parents=True, exist_ok=True)
 NO_WINDOW = 0x08000000          # CREATE_NO_WINDOW
 TITLE = "מסך המסחר"
 
