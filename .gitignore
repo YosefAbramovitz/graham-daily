@@ -26,3 +26,7 @@ swing_sectors.json
 reminders.json
 swing_auto.json
 spy_sim.json
+
+# טוקני הקישור לטלפון (הנוכחי, וגיבוב של הישנים)
+link_tokens.json
+link_tokens.tmp
