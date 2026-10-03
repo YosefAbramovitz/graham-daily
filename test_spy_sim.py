@@ -32,3 +32,35 @@ def test_no_data_and_settings_roundtrip():
         assert spy_sim.load_settings(p) == {}
         spy_sim.save_settings(p, {"start": "2026-09-02", "cash": 10_000})
         assert spy_sim.load_settings(p)["start"] == "2026-09-02"
+
+def test_fund_ids_keep_spy_first():
+    assert spy_sim.FUNDS[0][0] == "SPY"
+    assert spy_sim.row_id("SPY") == "spy_sim"
+    assert spy_sim.row_id("VT") == "sim_vt"
+    assert len({s for s, _ in spy_sim.FUNDS}) == len(spy_sim.FUNDS)
+
+
+def test_app_builds_a_row_per_fund():
+    import app
+    bars = {"SPY": [{"t": "2026-09-25T04:00:00Z", "c": 500.0}, {"t": "2026-09-28T04:00:00Z", "c": 510.0}],
+            "VT": [{"t": "2026-09-25T04:00:00Z", "c": 100.0}, {"t": "2026-09-28T04:00:00Z", "c": 99.0}],
+            "PPA": [{"t": "2026-09-25T04:00:00Z", "c": 120.0}, {"t": "2026-09-28T04:00:00Z", "c": 126.0}]}
+    saved = (app.accounts_available, app._swing_bars, app.last_trade, app.SPY_SIM_FILE)
+    with tempfile.TemporaryDirectory() as t:
+        try:
+            app.accounts_available = lambda: ["graham"]
+            app._swing_bars = lambda syms, s, e: {k: v for k, v in bars.items() if k in syms}
+            app.last_trade = lambda sym: None
+            app.SPY_SIM_FILE = Path(t) / "s.json"
+            spy_sim.save_settings(app.SPY_SIM_FILE, {"start": "2026-09-25", "cash": 10_000})
+            app._spy_sim.update(at=0.0, key=None, data=None)
+            rows = app.fund_sim_rows(today="2026-09-28")
+            by = {r["id"]: r for r in rows}
+            assert [r["id"] for r in rows] == [spy_sim.row_id(s) for s, _ in spy_sim.FUNDS]
+            assert abs(by["spy_sim"]["equity"] - 10_200) < 0.01
+            assert abs(by["sim_ppa"]["ret"] - 0.05) < 1e-9
+            assert by["sim_qqq"].get("error")                 # בלי נרות: שגיאה, לא קריסה
+            assert app.spy_sim_row(today="2026-09-28")["id"] == "spy_sim"
+        finally:
+            (app.accounts_available, app._swing_bars, app.last_trade, app.SPY_SIM_FILE) = saved
+            app._spy_sim.update(at=0.0, key=None, data=None)

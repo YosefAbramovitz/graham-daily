@@ -234,6 +234,67 @@ def test_universe_jump_is_reported():
     assert jumps == [{"at": "2020-09-28", "from": 408, "to": 1384}], jumps
 
 
+def test_funds_are_compared_per_period():
+    periods = [
+        {"buy": f"{2018+i}-06-30", "sell": f"{2019+i}-06-30", "n_priced": 400,
+         "n_scored": 300, "n_passed": 10, "n_held": 10,
+         "portfolio": port, "benchmark": 0.05, "excess": port - 0.05,
+         "funds": {"SPY": spy, "RSP": None if i == 0 else 0.0}}
+        for i, (port, spy) in enumerate([(0.10, 0.05), (0.20, 0.10),
+                                         (0.00, 0.02), (0.12, 0.06)])
+    ]
+    s = bt.summarise(periods, 400)
+    spy = s["funds"]["SPY"]
+    assert spy["periods"] == 4 and spy["periods_beating"] == "3/4", spy
+    assert spy["excess_cagr"] > 0, spy
+    # RSP חסר בתקופה הראשונה, ולכן נמדד רק על שלוש
+    assert s["funds"]["RSP"]["periods"] == 3, s["funds"]["RSP"]
+    assert s["excess_t_stat"] is not None
+
+
+def test_t_stat():
+    assert bt.t_stat([0.01, 0.01]) is None          # מעט מדי תצפיות
+    assert bt.t_stat([0.02, 0.02, 0.02]) is None    # בלי פיזור
+    # ממוצע 0.02, סטיית תקן 0.01, שלוש תצפיות: t = 0.02 / (0.01/√3)
+    t = bt.t_stat([0.01, 0.02, 0.03])
+    assert abs(t - 3.4641) < 1e-3, t
+
+
+def test_old_results_without_funds_still_summarise():
+    periods = [{"buy": "2020-06-30", "sell": "2021-06-30", "n_priced": 400,
+                "n_scored": 300, "n_passed": 5, "n_held": 5,
+                "portfolio": 0.1, "benchmark": 0.05, "excess": 0.05}]
+    assert bt.summarise(periods, 400)["funds"] == {}
+
+
+def test_late_alpaca_history_is_filled_from_yahoo():
+    import types, sys
+    idx_a = pd.to_datetime(["2020-07-01", "2020-07-02"])
+    idx_y = pd.to_datetime(["2017-01-03", "2020-07-01", "2020-07-02"])
+    # OLD מכוסה מההתחלה, LATE מתחיל רק ב-2020 (כמו בפיד IEX)
+    alpaca = pd.DataFrame({"OLD": [10.0, 11.0], "LATE": [5.0, 6.0]},
+                          index=idx_a).reindex(idx_y)
+    alpaca.loc[pd.Timestamp("2017-01-03"), "OLD"] = 9.0
+    asked = []
+    fake = types.SimpleNamespace(available=lambda: True,
+                                 daily_closes=lambda *a, **k: alpaca)
+    real_y = bt._yahoo_closes
+    sys.modules["alpaca_prices"] = fake
+    try:
+        def yahoo(tks, s, e):
+            asked.extend(tks)
+            return pd.DataFrame({"LATE": [4.0, 5.5, 6.5]}, index=idx_y)
+        bt._yahoo_closes = yahoo
+        out = bt.load_prices(["OLD", "LATE"], date(2017, 1, 1), date(2020, 7, 3))
+    finally:
+        bt._yahoo_closes = real_y
+        del sys.modules["alpaca_prices"]
+    assert asked == ["LATE"], asked
+    # yahoo ממלא את השנים החסרות, אלפקה קובע איפה שיש לו
+    assert out.loc[pd.Timestamp("2017-01-03"), "LATE"] == 4.0
+    assert out.loc[pd.Timestamp("2020-07-01"), "LATE"] == 5.0
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
