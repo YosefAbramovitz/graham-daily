@@ -152,7 +152,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     <summary><h2>פוזיציות פתוחות</h2><span class="pill" id="c-pos">…</span>
       <a class="btn" href="/positions" onclick="event.stopPropagation()">מסך סטטוס חי</a></summary>
     <div class="card"><table>
-      <thead><tr><th>סימול</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
+      <thead><tr><th>חברה</th><th>כמות</th><th>כניסה</th><th>נוכחי</th><th>רווח</th>
         <th>מה לעשות</th><th class="why">למה</th><th>פקודת יציאה</th><th>מאז הקנייה</th></tr></thead>
       <tbody id="pos"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
     </table></div>
@@ -162,7 +162,7 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
     <summary><h2>פקודות</h2><span class="pill" id="c-ord">…</span>
       <span class="sm">30 הימים האחרונים, בלי פקודות שבוטלו</span></summary>
     <div class="card"><table>
-      <thead><tr><th>סימול</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th>
+      <thead><tr><th>חברה</th><th>צד</th><th>סוג</th><th>כמות</th><th>מחיר</th><th>סטטוס</th><th>נשלחה</th>
         <th>מהכניסה עד הסטופ</th><th></th></tr></thead>
       <tbody id="ord"><tr><td colspan="9" class="empty">טוען…</td></tr></tbody>
     </table></div>
@@ -430,7 +430,7 @@ async function loadPositions(){
       const cls = r.action === "מכירה" ? "no" : r.action === "החזקה" ? "ok" : "warn";
       const g = r.gain * 100;
       return `<tr>
-        <td class="tk">${esc(r.ticker)}</td>
+        ${coCell(r)}
         <td class="num">${esc(r.qty)}</td>
         <td class="num">${f2(r.entry)}<span class="sm">${esc(r.entry_date || "")}</span></td>
         <td class="num">${f2(r.last)}</td>
@@ -498,7 +498,7 @@ async function loadOrders(){
       const legs = [r.leg_target ? `יעד ${f2(r.leg_target)}` : "", r.leg_stop ? `סטופ ${f2(r.leg_stop)}` : ""]
         .filter(Boolean).join(" · ");
       return `<tr>
-        <td class="tk">${esc(r.ticker)}</td>
+        ${coCell(r)}
         <td>${r.side === "buy" ? "קנייה" : "מכירה"}</td>
         <td>${esc(r.type)}${r.class && r.class !== "simple" ? `<span class="sm">${esc(r.class)}</span>` : ""}
           ${legs ? `<span class="sm">${legs}</span>` : ""}</td>
@@ -525,6 +525,11 @@ function logo(r){
   const letter = esc((r.name || r.ticker || "?").trim().charAt(0).toUpperCase());
   return `<span class="logo"><img src="${LOGO_URL(r.ticker)}" alt="" loading="lazy" decoding="async"
     referrerpolicy="no-referrer" onerror="this.parentNode.classList.add('fb'); this.remove()"><b>${letter}</b></span>`;
+}
+// תא חברה בפוזיציות ובפקודות: סמל, סימול ומתחתיו שם החברה, כמו במועמדות.
+function coCell(r){
+  return `<td data-sort="${esc(r.ticker)}"><div class="nm">${logo(r)}<div><span class="tk">${esc(r.ticker)}</span>${
+    r.name ? `<span class="sm">${esc(r.name)}</span>` : ""}</div></div></td>`;
 }
 let SPARK = {}, SPARK_AT = 0;
 function sparkSvg(pts){

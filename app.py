@@ -85,6 +85,7 @@ import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import requests
 from flask import (Flask, has_request_context, jsonify, make_response, redirect, request,
@@ -818,6 +819,39 @@ def api_watchlist():
     return jsonify({"rows": rows, "as_of": _watch["as_of"]})
 
 
+# שמות חברות לפוזיציות ולפקודות: קודם מהרשימה (שם כמו במועמדות), ולסימול שאינו
+# ברשימה (סווינג, מניה שירדה ממנה) - מאלפקה, פעם אחת לכל סימול, שמור בזיכרון.
+_asset_names: dict = {}
+NAME_TAILS = (" Class A Common Stock", " Class B Common Stock", " Class C Common Stock",
+              " Common Stock", " Ordinary Shares", " Common Shares")
+
+
+def clean_asset_name(name: str) -> str:
+    name = (name or "").strip()
+    for tail in NAME_TAILS:
+        if name.endswith(tail):
+            return name[: -len(tail)].strip()
+    return name
+
+
+def company_names(symbols) -> dict:
+    try:
+        known = {r["ticker"]: r["name"] for r in watchlist() if r.get("name")}
+    except Exception:
+        known = {}
+    out = {}
+    for s in {s for s in symbols if s}:
+        if s in known:
+            out[s] = known[s]
+            continue
+        if s not in _asset_names:
+            ok, a = api("GET", f"{base()}/v2/assets/{quote(s, safe='')}")
+            if ok and isinstance(a, dict):
+                _asset_names[s] = clean_asset_name(a.get("name"))
+        out[s] = _asset_names.get(s, "")
+    return out
+
+
 @app.get("/api/positions")
 def api_positions():
     ok, data = api("GET", f"{base()}/v2/positions")
@@ -831,6 +865,7 @@ def api_positions():
     orders = flatten_orders(orders) if ok_o and isinstance(orders, list) else None
     out = []
     smap = swing_map(co)
+    names = company_names(p.get("symbol") for p in data)
     for p in data:
         sym = p["symbol"]
         gain = float(p.get("unrealized_plpc") or 0)
@@ -841,7 +876,7 @@ def api_positions():
         if sym in smap:
             action, w, due = swing_advice(smap[sym], today)
             out.append({
-                "ticker": sym, "qty": p.get("qty"),
+                "ticker": sym, "name": names.get(sym, ""), "qty": p.get("qty"),
                 "entry": float(p.get("avg_entry_price") or 0),
                 "last": float(p.get("current_price") or 0),
                 "gain": round(gain, 4), "pl": float(p.get("unrealized_pl") or 0),
@@ -866,7 +901,7 @@ def api_positions():
         if action == "החזקה" and gain >= 0.40:
             action = "מתקרב ליעד"
         out.append({
-            "ticker": sym, "qty": p.get("qty"),
+            "ticker": sym, "name": names.get(sym, ""), "qty": p.get("qty"),
             "entry": float(p.get("avg_entry_price") or 0),
             "last": float(p.get("current_price") or 0),
             "gain": round(gain, 4),
@@ -893,9 +928,11 @@ def api_orders():
     held = {p.get("symbol") for p in pos} if ok_p and isinstance(pos, list) else set()
     # פקודות שבוטלו (כולל אלה שהוחלפו בחידוש) הן רעש: לא קרה בהן כלום.
     data = [o for o in data if o.get("status") != "canceled"]
+    names = company_names(o.get("symbol") for o in data)
     return jsonify({"rows": [{
         "leg_target": leg_levels(o)[0], "leg_stop": leg_levels(o)[1],
-        "id": o.get("id"), "ticker": o.get("symbol"), "side": o.get("side"),
+        "id": o.get("id"), "ticker": o.get("symbol"), "name": names.get(o.get("symbol"), ""),
+        "side": o.get("side"),
         "type": o.get("type"), "qty": o.get("qty"), "filled_qty": o.get("filled_qty"),
         "limit_price": o.get("limit_price"), "stop_price": o.get("stop_price"),
         "filled_avg_price": o.get("filled_avg_price"),
