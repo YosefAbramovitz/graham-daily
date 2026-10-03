@@ -53,6 +53,7 @@ from graham_screener import (MAX_NET_DEBT_TO_EBITDA, MIN_EBIT_EV,
                              MIN_REVENUE_INDUSTRIAL)
 
 DEFAULT_COST_BPS = 20        # עלות מסחר בכל צד, בנקודות בסיס
+LATE_START_DAYS = 10         # היסטוריה מאלפקה שמתחילה אחרי זה נחשבת חסרה
 DEFAULT_FUNDS = ("SPY", "RSP")   # S&P 500 לפי שווי שוק, ו-S&P 500 במשקל שווה
 STABILITY_YEARS = 5          # כמה שנים של רווח חיובי נדרשות
 
@@ -208,7 +209,12 @@ def load_prices(tickers: List[str], start: date, end: date) -> pd.DataFrame:
 
     have = set()
     if not alpaca.empty:
-        have = {c for c in alpaca.columns if alpaca[c].notna().any()}
+        # היסטוריה שמתחילה מאוחר נחשבת חסרה. בלי גישה ל-SIP אלפקה נופל ל-IEX,
+        # שמתחיל רק ב-2020, ואז מאות מניות (וגם הקרנות) נעלמות מהשנים
+        # הראשונות בלי שום שגיאה. yahoo ממלא אותן, ואלפקה עדיין קובע איפה שיש לו.
+        late = pd.Timestamp(start + timedelta(days=LATE_START_DAYS))
+        have = {c for c in alpaca.columns
+                if alpaca[c].notna().any() and alpaca[c].first_valid_index() <= late}
     missing = [t for t in tickers if t not in have]
 
     yahoo = pd.DataFrame()

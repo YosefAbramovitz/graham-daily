@@ -267,6 +267,34 @@ def test_old_results_without_funds_still_summarise():
     assert bt.summarise(periods, 400)["funds"] == {}
 
 
+def test_late_alpaca_history_is_filled_from_yahoo():
+    import types, sys
+    idx_a = pd.to_datetime(["2020-07-01", "2020-07-02"])
+    idx_y = pd.to_datetime(["2017-01-03", "2020-07-01", "2020-07-02"])
+    # OLD מכוסה מההתחלה, LATE מתחיל רק ב-2020 (כמו בפיד IEX)
+    alpaca = pd.DataFrame({"OLD": [10.0, 11.0], "LATE": [5.0, 6.0]},
+                          index=idx_a).reindex(idx_y)
+    alpaca.loc[pd.Timestamp("2017-01-03"), "OLD"] = 9.0
+    asked = []
+    fake = types.SimpleNamespace(available=lambda: True,
+                                 daily_closes=lambda *a, **k: alpaca)
+    real_y = bt._yahoo_closes
+    sys.modules["alpaca_prices"] = fake
+    try:
+        def yahoo(tks, s, e):
+            asked.extend(tks)
+            return pd.DataFrame({"LATE": [4.0, 5.5, 6.5]}, index=idx_y)
+        bt._yahoo_closes = yahoo
+        out = bt.load_prices(["OLD", "LATE"], date(2017, 1, 1), date(2020, 7, 3))
+    finally:
+        bt._yahoo_closes = real_y
+        del sys.modules["alpaca_prices"]
+    assert asked == ["LATE"], asked
+    # yahoo ממלא את השנים החסרות, אלפקה קובע איפה שיש לו
+    assert out.loc[pd.Timestamp("2017-01-03"), "LATE"] == 4.0
+    assert out.loc[pd.Timestamp("2020-07-01"), "LATE"] == 5.0
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):
