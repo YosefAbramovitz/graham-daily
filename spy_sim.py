@@ -15,6 +15,19 @@ from typing import List, Optional, Tuple
 
 CASH = 10_000.0
 
+# קרנות הסל שמוצגות בהדמיה, באותו סכום ומאותו יום. SPY ראשונה ומזהה השורה שלה
+# נשאר spy_sim, כי הסיכום היומי בטלגרם מסתמך עליה.
+FUNDS = [
+    ("SPY", "S&P 500"),
+    ("VT", "כל העולם"),
+    ("PPA", "ביטחוניות"),
+    ("QQQ", "נאסד\"ק 100"),
+]
+
+
+def row_id(sym: str) -> str:
+    return "spy_sim" if sym == "SPY" else f"sim_{sym.lower()}"
+
 
 def load_settings(path: Path) -> dict:
     try:

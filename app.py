@@ -1264,32 +1264,50 @@ SPY_SIM_FILE = HERE / "spy_sim.json"
 _spy_sim = {"at": 0.0, "key": None, "data": None}
 
 
-def spy_sim_row(since_hint: Optional[str] = None, today: Optional[str] = None) -> Optional[dict]:
-    """S&P 500 בהדמיה: 10,000$ ב-SPY מיום ההתחלה (נקבע בפעם הראשונה ונשמר ב-spy_sim.json).
-    הנרות והמחיר החי מאלפקה עם מפתח של חשבון כלשהו (נתוני שוק לא תלויים בחשבון)."""
+def fund_sim_rows(since_hint: Optional[str] = None, today: Optional[str] = None) -> List[dict]:
+    """קרנות סל בהדמיה (spy_sim.FUNDS): 10,000$ בכל אחת מיום ההתחלה (נקבע בפעם הראשונה
+    ונשמר ב-spy_sim.json). הנרות והמחיר החי מאלפקה עם מפתח של חשבון כלשהו (נתוני שוק לא
+    תלויים בחשבון). קרן שנכשלה מקבלת שורת שגיאה ולא מפילה את האחרות."""
     key = today or date.today().isoformat()
-    if _spy_sim["data"] and _spy_sim["key"] == key and time.time() - _spy_sim["at"] < 120:
+    if _spy_sim["data"] is not None and _spy_sim["key"] == key and time.time() - _spy_sim["at"] < 120:
         return _spy_sim["data"]
     avail = accounts_available()
     if not avail:
-        return None
+        return []
     st = spy_sim.load_settings(SPY_SIM_FILE)
     if not st.get("start"):
         st = {"start": since_hint or date.today().isoformat(), "cash": spy_sim.CASH}
         spy_sim.save_settings(SPY_SIM_FILE, st)
     start = date.fromisoformat(st["start"])
+    syms = [s for s, _ in spy_sim.FUNDS]
     with using(avail[0]):
-        bars = (_swing_bars(["SPY"], start - timedelta(days=7), date.today()) or {}).get("SPY") or []
-        live = last_trade("SPY")
-    closes = [(str(b["t"])[:10], float(b["c"])) for b in bars]
-    r = spy_sim.simulate(closes, st["start"], float(st.get("cash") or spy_sim.CASH), live, today)
-    row = {"id": "spy_sim", "label": "S&P 500 (הדמיה)", "sim": True, "equity": r["equity"],
-           "cash": 0.0, "start": r["start_value"], "ret": r["ret"], "maxdd": r["maxdd"],
-           "positions": 1 if r["shares"] else 0, "buys": 1 if r["shares"] else 0, "sells": 0,
-           "since": r["since"] or st["start"], "points": r["points"], "shares": round(r["shares"], 4),
-           "price": r["price"], "day_change": r["day_change"]}
-    _spy_sim.update(at=time.time(), key=key, data=row)
-    return row
+        all_bars = _swing_bars(syms, start - timedelta(days=7), date.today()) or {}
+        lives = {s: last_trade(s) for s in syms}
+    rows = []
+    for sym, name in spy_sim.FUNDS:
+        label = f"{name} (הדמיה)"
+        bars = all_bars.get(sym) or []
+        if not bars:
+            rows.append({"id": spy_sim.row_id(sym), "label": label, "sim": True,
+                         "error": f"אין נרות ל-{sym}"})
+            continue
+        closes = [(str(b["t"])[:10], float(b["c"])) for b in bars]
+        r = spy_sim.simulate(closes, st["start"], float(st.get("cash") or spy_sim.CASH),
+                             lives.get(sym), today)
+        rows.append({"id": spy_sim.row_id(sym), "label": label, "sim": True, "symbol": sym,
+                     "equity": r["equity"], "cash": 0.0, "start": r["start_value"],
+                     "ret": r["ret"], "maxdd": r["maxdd"],
+                     "positions": 1 if r["shares"] else 0, "buys": 1 if r["shares"] else 0,
+                     "sells": 0, "since": r["since"] or st["start"], "points": r["points"],
+                     "shares": round(r["shares"], 4), "price": r["price"],
+                     "day_change": r["day_change"]})
+    _spy_sim.update(at=time.time(), key=key, data=rows)
+    return rows
+
+
+def spy_sim_row(since_hint: Optional[str] = None, today: Optional[str] = None) -> Optional[dict]:
+    """שורת S&P 500 מתוך fund_sim_rows."""
+    return next((r for r in fund_sim_rows(since_hint, today) if r["id"] == "spy_sim"), None)
 
 
 @app.get("/api/compare")
@@ -1334,11 +1352,9 @@ def api_compare():
         })
     sinces = [r["since"] for r in rows if r.get("since")]
     try:
-        sim = spy_sim_row(min(sinces) if sinces else None)
+        rows.extend(fund_sim_rows(min(sinces) if sinces else None))
     except Exception as e:  # ההדמיה לא מפילה את מסך ההשוואה
-        sim = {"id": "spy_sim", "label": "S&P 500 (הדמיה)", "error": str(e)}
-    if sim:
-        rows.append(sim)
+        rows.append({"id": "spy_sim", "label": "קרנות סל (הדמיה)", "error": str(e)})
     out = {"rows": rows, "at": now_iso()}
     _compare.update(at=time.time(), data=out)
     return jsonify(out)
@@ -2256,15 +2272,20 @@ def day_summary(day: str) -> str:
         if other:
             lines.append("  נמכרו: " + ", ".join(other))
     try:
-        sim = spy_sim_row(today=day)
+        sims = fund_sim_rows(today=day)
     except Exception:
-        sim = None
-    if sim and not sim.get("error"):
+        sims = []
+    first = True
+    for sim in sims:
+        if sim.get("error"):
+            continue
         eq, chg = sim["equity"], sim["day_change"]
         pct = chg / (eq - chg) * 100 if eq - chg else 0.0
-        lines.append(f"\n{sim['label']}: ${eq:,.0f} ({'+' if chg >= 0 else ''}{chg:,.0f}, "
+        lines.append(f"{chr(10) if first else ''}{sim['label']}: ${eq:,.0f} "
+                     f"({'+' if chg >= 0 else ''}{chg:,.0f}, "
                      f"{'+' if pct >= 0 else ''}{pct:.2f}%) | תשואה מ-{sim['since']}: "
                      f"{sim['ret'] * 100:+.2f}%")
+        first = False
     return "\n".join(lines)
 
 
