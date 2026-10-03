@@ -234,6 +234,39 @@ def test_universe_jump_is_reported():
     assert jumps == [{"at": "2020-09-28", "from": 408, "to": 1384}], jumps
 
 
+def test_funds_are_compared_per_period():
+    periods = [
+        {"buy": f"{2018+i}-06-30", "sell": f"{2019+i}-06-30", "n_priced": 400,
+         "n_scored": 300, "n_passed": 10, "n_held": 10,
+         "portfolio": port, "benchmark": 0.05, "excess": port - 0.05,
+         "funds": {"SPY": spy, "RSP": None if i == 0 else 0.0}}
+        for i, (port, spy) in enumerate([(0.10, 0.05), (0.20, 0.10),
+                                         (0.00, 0.02), (0.12, 0.06)])
+    ]
+    s = bt.summarise(periods, 400)
+    spy = s["funds"]["SPY"]
+    assert spy["periods"] == 4 and spy["periods_beating"] == "3/4", spy
+    assert spy["excess_cagr"] > 0, spy
+    # RSP חסר בתקופה הראשונה, ולכן נמדד רק על שלוש
+    assert s["funds"]["RSP"]["periods"] == 3, s["funds"]["RSP"]
+    assert s["excess_t_stat"] is not None
+
+
+def test_t_stat():
+    assert bt.t_stat([0.01, 0.01]) is None          # מעט מדי תצפיות
+    assert bt.t_stat([0.02, 0.02, 0.02]) is None    # בלי פיזור
+    # ממוצע 0.02, סטיית תקן 0.01, שלוש תצפיות: t = 0.02 / (0.01/√3)
+    t = bt.t_stat([0.01, 0.02, 0.03])
+    assert abs(t - 3.4641) < 1e-3, t
+
+
+def test_old_results_without_funds_still_summarise():
+    periods = [{"buy": "2020-06-30", "sell": "2021-06-30", "n_priced": 400,
+                "n_scored": 300, "n_passed": 5, "n_held": 5,
+                "portfolio": 0.1, "benchmark": 0.05, "excess": 0.05}]
+    assert bt.summarise(periods, 400)["funds"] == {}
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -24,14 +24,23 @@
 לפי הספרות. בלי מסד נתונים בתשלום אי אפשר לתקן אותה, ולכן כל מספר שיוצא
 מכאן צריך להיקרא כתקרה, לא כהערכה.
 
-שאר ההסתייגויות: אין דיבידנדים בתשואה (רק שינוי מחיר מתואם), אין מס, ועלות
-המסחר היא אומדן גס.
+שאר ההסתייגויות: המחירים מתואמים לפיצולים ולדיבידנדים בשני המקורות, ולכן
+התשואה כוללת דיבידנדים כאילו הושקעו מחדש. אין מס, ועלות המסחר היא אומדן גס.
+
+קרנות להשוואה
+-------------
+מלבד היקום במשקל שווה, כל תקופה נמדדת גם מול קרנות סל אמיתיות שאפשר היה
+לקנות: SPY (S&P 500 לפי שווי שוק) ו-RSP (S&P 500 במשקל שווה). הן אינן
+סובלות מהטיית השרידות, ולכן הפער מולן מוטה לטובת המסך עוד יותר מהפער מול
+היקום. אם המסך לא מכה אותן בבירור, אין סיבה להעדיף אותו על פני קרן זולה.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
+import statistics
 import sys
 from datetime import date, timedelta
 from typing import Dict, List, Optional
@@ -44,6 +53,7 @@ from graham_screener import (MAX_NET_DEBT_TO_EBITDA, MIN_EBIT_EV,
                              MIN_REVENUE_INDUSTRIAL)
 
 DEFAULT_COST_BPS = 20        # עלות מסחר בכל צד, בנקודות בסיס
+DEFAULT_FUNDS = ("SPY", "RSP")   # S&P 500 לפי שווי שוק, ו-S&P 500 במשקל שווה
 STABILITY_YEARS = 5          # כמה שנים של רווח חיובי נדרשות
 
 
@@ -261,13 +271,26 @@ def rebalance_dates(start_year: int, end_year: int, month: int, day: int,
 def run(tickers: List[str], start_year: int, end_year: int,
         month: int = 6, day: int = 30, cost_bps: float = DEFAULT_COST_BPS,
         max_names: int = 30, quiet: bool = False,
-        thresholds: Optional[dict] = None, freq: str = "annual") -> dict:
+        thresholds: Optional[dict] = None, freq: str = "annual",
+        funds: tuple = DEFAULT_FUNDS) -> dict:
     """בדיקה לאחור עם איזון שנתי והחזקה שווה."""
     dates = rebalance_dates(start_year, end_year, month, day, freq)
     close = load_prices(tickers, dates[0] - timedelta(days=400),
                         dates[-1] + timedelta(days=400))
     if close.empty:
         raise RuntimeError("לא התקבלו מחירים בכלל")
+
+    # הקרנות נטענות בנפרד: הן אינן חלק מהיקום ואסור שייכנסו לבחירה או
+    # לממוצע של היקום.
+    fund_close = pd.DataFrame()
+    if funds:
+        fund_close = load_prices(list(funds), dates[0] - timedelta(days=400),
+                                 dates[-1] + timedelta(days=400))
+        missing = [f for f in funds if f not in fund_close.columns
+                   or not fund_close[f].notna().any()]
+        if missing and not quiet:
+            print(f"[אזהרה] אין מחירים לקרנות {missing}. הן לא יופיעו בהשוואה.",
+                  flush=True)
 
     # כיסוי הנתונים נבדק לפני שמחשבים משהו. בדיקה לאחור שרצה על שליש
     # מהיקום מחזירה מספר שנראה סביר לגמרי ואינו אומר דבר, וזה בדיוק סוג
@@ -364,6 +387,10 @@ def run(tickers: List[str], start_year: int, end_year: int,
         # ומתאר משהו אחר לגמרי ממה שנדמה. נספר ומדווח בנפרד.
         port = (sum(r["ret"] for r in held) / len(held) - cost) if held else 0.0
         bench = sum(universe_returns) / len(universe_returns) if universe_returns else 0.0
+        fund_ret = {}
+        for f in funds:
+            f0, f1 = price_on(fund_close, f, buy), price_on(fund_close, f, sell)
+            fund_ret[f] = round(f1 / f0 - 1.0, 4) if f0 and f1 else None
 
         periods.append({
             "buy": buy.isoformat(), "sell": sell.isoformat(),
@@ -371,6 +398,7 @@ def run(tickers: List[str], start_year: int, end_year: int,
             "n_passed": len(picked), "n_held": len(held),
             "portfolio": round(port, 4), "benchmark": round(bench, 4),
             "excess": round(port - bench, 4),
+            "funds": fund_ret,
             "names": [r["ticker"] for r in held],
         })
         if not quiet:
@@ -378,7 +406,9 @@ def run(tickers: List[str], start_year: int, end_year: int,
                   f"יקום {priced}, נמדדו {scored}, "
                   f"עברו {len(picked)}, הוחזקו {len(held)}, "
                   f"תיק {port*100:+.1f}%, יקום {bench*100:+.1f}%, "
-                  f"עודף {(port-bench)*100:+.1f}%", flush=True)
+                  f"עודף {(port-bench)*100:+.1f}%"
+                  + "".join(f", {f} {v*100:+.1f}%" for f, v in fund_ret.items()
+                            if v is not None), flush=True)
 
     out = summarise(periods, len(facts))
     out['coverage'] = coverage
@@ -404,6 +434,46 @@ def _annualised(periods: List[dict], key: str) -> float:
     for p in periods:
         total *= (1 + p[key])
     return total ** (1 / _span_years(periods)) - 1
+
+
+def t_stat(diffs: List[float]) -> Optional[float]:
+    """ממוצע ההפרש לתקופה חלקי טעות התקן שלו.
+
+    מתחת ל-2 בערך, ההפרש יכול בקלות להיות מזל. באיזון רבעוני התקופות
+    חופפות במניות, וה-t שיוצא אופטימי מדי.
+    """
+    if len(diffs) < 3:
+        return None
+    sd = statistics.stdev(diffs)
+    if sd == 0:
+        return None
+    return statistics.fmean(diffs) / (sd / math.sqrt(len(diffs)))
+
+
+def fund_comparison(measured: List[dict]) -> Dict[str, dict]:
+    """התיק מול כל קרן, רק על התקופות שבהן יש לקרן מחיר."""
+    names = []
+    for p in measured:
+        for f in (p.get("funds") or {}):
+            if f not in names:
+                names.append(f)
+    out = {}
+    for f in names:
+        rows = [p for p in measured if (p.get("funds") or {}).get(f) is not None]
+        if not rows:
+            continue
+        ret = [{"portfolio": p["portfolio"], "fund": p["funds"][f],
+                "buy": p["buy"], "sell": p["sell"]} for p in rows]
+        port, fund = _annualised(ret, "portfolio"), _annualised(ret, "fund")
+        diffs = [p["portfolio"] - p["funds"][f] for p in rows]
+        t = t_stat(diffs)
+        out[f] = {"periods": len(rows),
+                  "fund_cagr": round(fund, 4),
+                  "portfolio_cagr": round(port, 4),
+                  "excess_cagr": round(port - fund, 4),
+                  "t_stat": round(t, 2) if t is not None else None,
+                  "periods_beating": f"{sum(1 for d in diffs if d > 0)}/{len(rows)}"}
+    return out
 
 
 def universe_jumps(periods: List[dict], ratio: float = UNIVERSE_JUMP_RATIO) -> List[dict]:
@@ -457,10 +527,14 @@ def summarise(periods: List[dict], n_universe: int) -> dict:
 
     if measured:
         port, bench = _annualised(measured, "portfolio"), _annualised(measured, "benchmark")
+        t = t_stat([p["excess"] for p in measured])
         out.update(portfolio_cagr=round(port, 4), benchmark_cagr=round(bench, 4),
-                   excess_cagr=round(port - bench, 4))
+                   excess_cagr=round(port - bench, 4),
+                   excess_t_stat=round(t, 2) if t is not None else None,
+                   funds=fund_comparison(measured))
     else:
-        out.update(portfolio_cagr=None, benchmark_cagr=None, excess_cagr=None)
+        out.update(portfolio_cagr=None, benchmark_cagr=None, excess_cagr=None,
+                   excess_t_stat=None, funds={})
 
     fport, fbench = _annualised(periods, "portfolio"), _annualised(periods, "benchmark")
     out["full_window"] = {"portfolio_cagr": round(fport, 4),
@@ -473,7 +547,8 @@ CAVEATS = """
 ---------------------------
 * היקום הוא חברי המדד של היום. מי שפשט רגל או נמחק לא נמצא כאן, ולכן
   התוצאה מוטה כלפי מעלה. קראו אותה כתקרה.
-* התשואה היא שינוי מחיר מתואם בלבד. אין מס.
+* התשואה כוללת דיבידנדים (מחירים מתואמים), גם בתיק וגם בקרנות. אין מס.
+* הקרנות (SPY, RSP) אינן מוטות בשרידות, והתיק כן. עודף מולן הוא תקרה.
 * עלות המסחר היא אומדן גס וזהה לכל המניות.
 * מספר התקופות קטן. הפרש של אחוז או שניים בשנה על פני עשר שנים אינו
   ראיה סטטיסטית לכלום.
@@ -498,6 +573,8 @@ def main() -> int:
                     help="דריסת סף הרווחיות הגולמית (ברירת מחדל 0.20)")
     ap.add_argument("--min-net-payout-yield", type=float, default=None)
     ap.add_argument("--max-net-debt-to-ebitda", type=float, default=None)
+    ap.add_argument("--funds", default=",".join(DEFAULT_FUNDS),
+                    help="קרנות סל להשוואה, מופרדות בפסיקים. ריק = בלי")
     ap.add_argument("--out", default="backtest_results.json")
     args = ap.parse_args()
 
@@ -521,7 +598,8 @@ def main() -> int:
     print()
     result = run(tickers, args.start, args.end, args.month, args.day,
                  args.cost_bps, args.max_names, thresholds=thresholds,
-                 freq=args.freq)
+                 freq=args.freq,
+                 funds=tuple(f.strip().upper() for f in args.funds.split(",") if f.strip()))
     result["thresholds"] = thresholds or "ברירת מחדל"
 
     print("\n" + "=" * 60)
@@ -531,7 +609,14 @@ def main() -> int:
         print(f"נמדד מ-{result['measured_from']}, {result['measured_years']} שנים\n")
         print(f"תשואה שנתית ממוצעת, התיק:  {result['portfolio_cagr']*100:+.2f}%")
         print(f"תשואה שנתית ממוצעת, היקום: {result['benchmark_cagr']*100:+.2f}%")
-        print(f"עודף:                      {result['excess_cagr']*100:+.2f}%")
+        print(f"עודף:                      {result['excess_cagr']*100:+.2f}%"
+              + (f"  (t={result['excess_t_stat']:.2f})"
+                 if result.get("excess_t_stat") is not None else ""))
+        for f, c in result.get("funds", {}).items():
+            tt = f"t={c['t_stat']:.2f}" if c["t_stat"] is not None else "t=?"
+            print(f"מול {f:<4} {c['fund_cagr']*100:+.2f}%/שנה: "
+                  f"עודף {c['excess_cagr']*100:+.2f}% ({tt}), "
+                  f"היכה ב-{c['periods_beating']} תקופות")
         print(f"תקופות שבהן היכה את היקום: {result['periods_beating_benchmark']}")
         print(f"מניות בתיק בממוצע:         {result['avg_names_held']}")
     if result.get("leading_cash_periods") and result.get("portfolio_cagr") is not None:
