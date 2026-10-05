@@ -1316,13 +1316,13 @@ def fund_sim_rows(since_hint: Optional[str] = None, today: Optional[str] = None)
         st = {"start": since_hint or date.today().isoformat(), "cash": spy_sim.CASH}
         spy_sim.save_settings(SPY_SIM_FILE, st)
     start = date.fromisoformat(st["start"])
-    syms = [s for s, _ in spy_sim.FUNDS]
+    syms = [f[0] for f in spy_sim.FUNDS]
     with using(avail[0]):
         all_bars = _swing_bars(syms, start - timedelta(days=7), date.today()) or {}
         lives = {s: last_trade(s) for s in syms}
     rows = []
-    for sym, name in spy_sim.FUNDS:
-        label = f"{name} (הדמיה)"
+    for sym, name, fund in spy_sim.FUNDS:
+        label = f"{name} · {sym} (הדמיה)"
         bars = all_bars.get(sym) or []
         if not bars:
             rows.append({"id": spy_sim.row_id(sym), "label": label, "sim": True,
@@ -1331,7 +1331,7 @@ def fund_sim_rows(since_hint: Optional[str] = None, today: Optional[str] = None)
         closes = [(str(b["t"])[:10], float(b["c"])) for b in bars]
         r = spy_sim.simulate(closes, st["start"], float(st.get("cash") or spy_sim.CASH),
                              lives.get(sym), today)
-        rows.append({"id": spy_sim.row_id(sym), "label": label, "sim": True, "symbol": sym,
+        rows.append({"id": spy_sim.row_id(sym), "label": label, "sim": True, "symbol": sym, "fund": fund,
                      "equity": r["equity"], "cash": 0.0, "start": r["start_value"],
                      "ret": r["ret"], "maxdd": r["maxdd"],
                      "positions": 1 if r["shares"] else 0, "buys": 1 if r["shares"] else 0,
