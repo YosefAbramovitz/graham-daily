@@ -8,12 +8,12 @@
 :root{
   --bg:#faf8f4; --paper:#fff; --ink:#1c1a17; --muted:#6f6a60; --line:#e5e1d8;
   --accent:#8a6a3b; --good-bg:#e4efe2; --good-ink:#2f6b34; --bad-bg:#f3e6e4; --bad-ink:#94413a;
-  --s1:#8a6a3b; --s2:#3b6a8a; --s3:#5f8a3b; --s4:#8a3b6a; --s5:#b0582a; --s6:#4a4a9a; --s7:#2f7f7a; --s8:#9a8a2a; --s9:#6a6a6a; --s10:#a33b3b; --s11:#3b8a5f; --shadow:0 1px 3px rgba(28,26,23,.07);
+  --s1:#8a6a3b; --s2:#3b6a8a; --s3:#5f8a3b; --s4:#8a3b6a; --s5:#b0582a; --s6:#4a4a9a; --s7:#2f7f7a; --s8:#9a8a2a; --s9:#6a6a6a; --s10:#a33b3b; --s11:#3b8a5f; --s12:#7a5a2a; --s13:#2a6a9a; --shadow:0 1px 3px rgba(28,26,23,.07);
 }
 @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
   --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
   --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
-  --s1:#c9a465; --s2:#6fa8d0; --s3:#9ccc6f; --s4:#d07fae; --s5:#e59a6b; --s6:#a3a3e6; --s7:#6cc7bf; --s8:#d8c65f; --s9:#b5b0a6; --s10:#e08585; --s11:#7fd0a3; --shadow:0 1px 3px rgba(0,0,0,.35);
+  --s1:#c9a465; --s2:#6fa8d0; --s3:#9ccc6f; --s4:#d07fae; --s5:#e59a6b; --s6:#a3a3e6; --s7:#6cc7bf; --s8:#d8c65f; --s9:#b5b0a6; --s10:#e08585; --s11:#7fd0a3; --s12:#d1a46a; --s13:#79b8e6; --shadow:0 1px 3px rgba(0,0,0,.35);
 }}
 *{box-sizing:border-box}
 body{margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
@@ -23,6 +23,7 @@ h1{font-size:23px; margin:0}
 a.back{font-size:13px; color:var(--muted); text-decoration:none; border-bottom:1px dotted var(--muted)}
 .grow{flex:1}
 .sm{font-size:12px; color:var(--muted)}
+.fund{margin:-4px 0 6px}
 .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px}
 .card{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow)}
 .card h3{margin:0 0 6px; font-size:15px; display:flex; align-items:center; gap:8px}
@@ -56,7 +57,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pct = v => v == null ? "—" : `<bdi>${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%</bdi>`;
 const usd = v => v == null ? "—" : `<bdi>${Number(v).toLocaleString("en-US", {maximumFractionDigits: 0})}$</bdi>`;
-const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)", "var(--s9)", "var(--s10)", "var(--s11)"];
+const COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--s5)", "var(--s6)", "var(--s7)", "var(--s8)", "var(--s9)", "var(--s10)", "var(--s11)", "var(--s12)", "var(--s13)"];
 async function jget(u){ const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; }
 async function jpost(u, b){ const r = await fetch(u, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(b)});
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; }
@@ -107,6 +108,7 @@ async function load(){
     $("cards").innerHTML = rows.length ? rows.map((r, i) => r.error
       ? `<div class="card"><h3><span class="sw" style="background:${COLORS[i % COLORS.length]}"></span>${esc(r.label)}</h3><div class="err">${esc(r.error)}</div></div>`
       : `<div class="card"><h3><span class="sw" style="background:${COLORS[i % COLORS.length]}"></span>${esc(r.label)}</h3>
+          ${r.fund ? `<div class="sm fund"><bdi>${esc(r.symbol)} · ${esc(r.fund)}</bdi></div>` : ""}
           <div class="big">${usd(r.equity)}</div>
           <div class="row"><span>תשואה</span><b class="${(r.ret || 0) >= 0 ? "up" : "down"}">${pct(r.ret)}</b></div>
           <div class="row"><span>ירידה מקסימלית</span><b>${pct(r.maxdd)}</b></div>
@@ -114,7 +116,7 @@ async function load(){
           <div class="row"><span>פוזיציות</span><b>${r.positions ?? "—"}</b></div>
           <div class="row"><span>קניות / מכירות</span><b>${r.buys} / ${r.sells}</b></div>
           <div class="row"><span>מתחילת</span><b>${esc(r.since || "—")}</b></div>
-          ${r.sim ? `<p class="sm">הדמיה מקומית, לא חשבון באלפקה: ${r.shares} יחידות ${esc(r.symbol || "SPY")} נקנו בסגירה של ${esc(r.since || "—")} ומוחזקות, כולל דיבידנדים.</p>` : ""}
+          ${r.sim ? `<p class="sm">הדמיה מקומית, לא חשבון באלפקה: ${r.shares} יחידות <bdi>${esc(r.symbol || "SPY")}</bdi> נקנו בסגירה של ${esc(r.since || "—")} ומוחזקות, כולל דיבידנדים.</p>` : ""}
         </div>`).join("") : `<div class="card">לא הוגדרו חשבונות ב-.env.</div>`;
     chart(rows);
   } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }

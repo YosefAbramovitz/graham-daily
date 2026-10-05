@@ -15,18 +15,20 @@ from typing import List, Optional, Tuple
 
 CASH = 10_000.0
 
-# קרנות הסל שמוצגות בהדמיה, באותו סכום ומאותו יום. SPY ראשונה ומזהה השורה שלה
-# נשאר spy_sim, כי הסיכום היומי בטלגרם מסתמך עליה.
+# קרנות הסל שמוצגות בהדמיה, באותו סכום ומאותו יום: (סימול, שם קצר, שם הקרן).
+# SPY ראשונה ומזהה השורה שלה נשאר spy_sim, כי הסיכום היומי בטלגרם מסתמך עליה.
 FUNDS = [
-    ("SPY", "S&P 500"),
-    ("VT", "כל העולם"),
-    ("PPA", "ביטחוניות"),
-    ("QQQ", "נאסד\"ק 100"),
-    ("VTV", "מניות ערך"),
-    ("SMH", "שבבים"),
-    ("GLD", "זהב"),
-    ("DYNF", "מנוהלת אקטיבית"),
-    ("JAAA", "אג\"ח"),
+    ("SPY", "S&P 500", "SPDR S&P 500"),
+    ("VT", "כל העולם", "Vanguard Total World Stock"),
+    ("PPA", "ביטחוניות", "Invesco Aerospace & Defense"),
+    ("QQQ", "נאסד\"ק 100", "Invesco QQQ"),
+    ("VTV", "מניות ערך", "Vanguard Value"),
+    ("SMH", "שבבים", "VanEck Semiconductor"),
+    ("GLD", "זהב", "SPDR Gold Shares"),
+    ("DYNF", "מנוהלת אקטיבית", "iShares U.S. Equity Factor Rotation Active"),
+    ("JAAA", "אג\"ח", "Janus Henderson AAA CLO"),
+    ("LIT", "מתכות וסוללות", "Global X Lithium & Battery Tech"),
+    ("ITB", "בנייה", "iShares U.S. Home Construction"),
 ]
 
 
