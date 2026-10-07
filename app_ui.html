@@ -207,14 +207,14 @@ footer{color:var(--muted); font-size:12px; line-height:1.8; margin-top:30px}
         (עד ספט' 2026: סטופ 1.5 ATR ו-15 ימים. הבדיקה ברמת התיק תוקנה, והיציאה נבחרה מחדש.)</p>
       <p class="sm" style="margin:0" id="swing-bt"></p>
       <p class="sm" style="margin:6px 0 0"><b>ציון איכות (0-3):</b> מגמה חזקה, תיקון עמוק ומחזור נמוך בירידה.
-        בבדיקה, עסקה עם ציון 3 הניבה בממוצע פי 2.5 מאות רגיל, וציון 0-1 הפסיד — אבל העדפה של ציון 3
-        לא שיפרה את התשואה של התיק כולו. מידע לבחירה, לא כלל.</p>
+        הציון קובע את הגודל: ציון 3 פי 2 מהסיכון הבסיסי, ציון 2 כבסיס, ציון 1 חצי, ציון 0 בלי כניסה.
+        בבדיקה 2021-25 זה העלה את התיק מ-6.4% ל-11.2% בשנה, עם ירידה מקסימלית של 17% במקום 15%.</p>
       <p class="sm" style="margin:6px 0 0"><b>ענף:</b> "לבד" = המניה ירדה בזמן שהענף שלה עלה ב-10 הימים האחרונים.
         בבדיקה אותות כאלה (כשליש) הרוויחו כמעט אפס בשתי התקופות, מול כ-0.12R לעסקה כשהענף ירד איתה —
         כנראה ירידה בגלל חדשות על החברה עצמה. גם זה מידע, לא כלל: תיק שדילג עליהם לא הרוויח יותר.</p>
       <div class="bulk" style="margin-top:10px">
         <span id="swing-mkt" class="pill">…</span>
-        <div class="fld"><label>סיכון לעסקה ($)</label>
+        <div class="fld"><label title="ציון 2. ציון 3 פי 2, ציון 1 חצי, ציון 0 בלי כניסה">סיכון בסיס לעסקה ($)</label>
           <input id="swing-risk" type="number" step="10" min="1" oninput="swingRiskChange()"></div>
         <span class="sm" id="swing-slots"></span>
         <span class="grow"></span>
@@ -970,7 +970,9 @@ function swingSize(r){
   const entry = SW_ENTRY[r.ticker] ?? Math.round(r.close * 1.01 * 100) / 100;
   const stop = Math.round((entry - r.stop_dist) * 100) / 100;
   const eq = SW.equity || 0, per = entry - stop;
-  let qty = per > 0 ? Math.floor(swingRisk() / per) : 0;
+  // הסיכון שבשדה הוא הבסיס (ציון 2); לפי ציון האיכות פי 0 / 0.5 / 1 / 2 (swing.QUALITY_RISK)
+  const m = r.quality == null ? 1 : ((SW.rules.risk_mult || {})[String(r.quality)] ?? 1);
+  let qty = per > 0 ? Math.floor(swingRisk() * m / per) : 0;
   if (eq) qty = Math.min(qty, Math.floor(eq * SW.rules.max_position_pct / entry));
   if (SW.cash != null) qty = Math.min(qty, Math.floor(Math.max(SW.cash, 0) / entry));
   return {entry, stop, qty: Math.max(qty, 0), risk: Math.max(qty, 0) * per};

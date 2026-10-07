@@ -7,7 +7,11 @@ def test_swing_plan():
             {"ticker": "BBB", "close": 100.0, "stop_dist": 3.0, "rank": 2}]
     p = plans.plan_swing(rows, 10_000, 10_000, {"AAA": 50.0, "BBB": 130.0}, [], 0)
     assert [x["ticker"] for x in p] == ["AAA"]          # BBB: קפיצה של 30% = תקלה
-    assert p[0]["qty"] == 25 and p[0]["stop"] == 48.0     # 0.5% מ-10K = 50$ / 2$
+    assert p[0]["qty"] == 40 and p[0]["stop"] == 48.0     # ציון 3: 1% = 100$ / 2$ = 50, תקרת 20% = 40
+    rows[0]["quality"] = 2
+    assert plans.plan_swing(rows, 10_000, 10_000, {"AAA": 50.0}, [], 0)[0]["qty"] == 25  # 0.5% = 50$ / 2$
+    rows[0]["quality"] = 0
+    assert plans.plan_swing(rows, 10_000, 10_000, {"AAA": 50.0}, [], 0) == []          # ציון 0: בלי כניסה
     b = plans.swing_order(p[0], "swing-AAA-1")
     assert b["order_class"] == "oto" and b["stop_loss"]["stop_price"] == "48.00"
 

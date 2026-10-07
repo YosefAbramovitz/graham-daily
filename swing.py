@@ -53,6 +53,12 @@ HOLD_DAYS = 20
 # ההיסטורי אותה בחירה (4 ATR, 20 ימים) הייתה הטובה ב-2016-20. עדיין פחות מ-SPY ב-2021-25
 # (+14.7%, שארפ 0.89) - היתרון הוא ירידה קטנה יותר, לא תשואה.
 RISK_PCT = 0.005
+# סיכון לפי ציון האיכות (size_quality_sim.py, אוקטובר 2026, 15 מקומות, תקרה 20%):
+# 0/0.25/0.5/1% לציון 0/1/2/3, מול 0.5% קבוע. 2016-20: +11.7% / ‎-20% / שארפ 1.06 (מול
+# +11.1% / ‎-19% / 1.16). 2021-25: +11.2% / ‎-17% / 0.92 (מול +6.4% / ‎-15% / 0.72).
+# יותר תשואה וירידה עמוקה יותר. הטיה מתונה (0.25/0.25/0.5/0.75) הניבה +8.6% ב-2021-25.
+# ציון 0 = בלי כניסה. RISK_PCT נשאר הבסיס (ציון 2), וגם ברירת המחדל כשאין ציון.
+QUALITY_RISK = {0: 0.0, 1: 0.0025, 2: 0.005, 3: 0.01}
 MAX_POSITION_PCT = 0.20
 MAX_POSITIONS = 15
 MIN_PRICE = 10.0
@@ -76,8 +82,8 @@ Q_VOLRATIO_MAX = 1.26
 # מה הבדיקה לאחור הראתה, להצגה במסך (swing_results.json)
 BACKTEST = {
     "period": "2021-2025", "trades": 4618, "win": 0.54, "exp_r": 0.10,
-    "avg_ret": 0.012, "days": 18.8, "cagr": 0.064, "maxdd": -0.149,
-    "is_cagr": 0.111, "spy_is_cagr": 0.153,
+    "avg_ret": 0.012, "days": 18.8, "cagr": 0.112, "maxdd": -0.171,
+    "is_cagr": 0.117, "spy_is_cagr": 0.153,
     # תוחלת לעסקה על הרכב S&P 500 היסטורי (בלי הטיית שורדים, survivor_sim.py)
     "pit_exp_r": 0.08,
     "spy_cagr": 0.147, "spy_maxdd": -0.245,
@@ -280,12 +286,24 @@ def trading_days_between(a: date, b: date) -> int:
 # גודל ופקודה
 # ---------------------------------------------------------------------------
 
+def risk_mult(quality) -> float:
+    """פי כמה מהסיכון הבסיסי (RISK_PCT) לפי ציון האיכות. בלי ציון: פי 1."""
+    try:
+        return QUALITY_RISK[int(quality)] / RISK_PCT
+    except (TypeError, ValueError, KeyError):
+        return 1.0
+
+
 def size(equity: float, entry: float, stop: float, risk_usd: Optional[float] = None,
-         cash: Optional[float] = None) -> dict:
-    """כמה מניות: סיכון קבוע חלקי המרחק לסטופ, עם תקרה של 20% מההון."""
+         cash: Optional[float] = None, quality=None) -> dict:
+    """כמה מניות: סיכון לפי ציון האיכות חלקי המרחק לסטופ, עם תקרה של 20% מההון.
+
+    risk_usd הוא הסיכון הבסיסי (ציון 2); הוא מוכפל לפי הציון כמו RISK_PCT.
+    """
     if not (equity and entry > 0 and stop < entry):
         return {"qty": 0, "risk": 0.0, "value": 0.0, "capped": False}
-    risk = risk_usd if risk_usd and risk_usd > 0 else equity * RISK_PCT
+    base = risk_usd if risk_usd and risk_usd > 0 else equity * RISK_PCT
+    risk = base * risk_mult(quality)
     qty = math.floor(risk / (entry - stop))
     cap = math.floor(equity * MAX_POSITION_PCT / entry)
     capped = qty > cap

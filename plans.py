@@ -1,7 +1,8 @@
 """
 תוכניות קנייה לכל חשבון, לחיצה אחת ביום עם אישור - בלי רשת, כדי שאפשר לבדוק.
 
-  * סווינג: אותות הסגירה של אתמול, לפי הדירוג, 0.5% סיכון לעסקה (swing.size),
+  * סווינג: אותות הסגירה של אתמול, לפי הדירוג, סיכון לפי ציון האיכות (swing.size:
+    0/0.25/0.5/1% לציון 0/1/2/3; ציון 0 לא נקנה),
     עד 15 פוזיציות ועד המזומן. קנייה market עם סטופ צמוד ב-swing.STOP_ATR (4 ATR).
   * גראהם: המניות מהמסך שלא נפסלו, הזולות קודם (value_rank, סדר בלבד), עד 15 פוזיציות
     במשקל שווה (1/15 מהתיק), עם יעד מכירה +50%.
@@ -35,7 +36,7 @@ def plan_swing(rows: List[dict], equity: float, cash: float, prices: Dict[str, f
         stop = round(px - r["stop_dist"], 2)
         if not 0 < stop < px:
             continue
-        sz = swing.size(equity, px, stop, cash=left)
+        sz = swing.size(equity, px, stop, cash=left, quality=r.get("quality"))
         if sz["qty"] < 1:
             continue
         left -= sz["qty"] * px

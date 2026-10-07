@@ -27,6 +27,15 @@ def test_size_risk_and_cap():
     assert swing.size(100_000, 50.0, 51.0)["qty"] == 0
 
 
+def test_size_by_quality():
+    assert swing.size(100_000, 50.0, 45.0, quality=3)["qty"] == 200     # 1% = 1000$ / 5$
+    assert swing.size(100_000, 50.0, 45.0, quality=2)["qty"] == 100     # 0.5%
+    assert swing.size(100_000, 50.0, 45.0, quality=1)["qty"] == 50      # 0.25%
+    assert swing.size(100_000, 50.0, 45.0, quality=0)["qty"] == 0
+    assert swing.size(100_000, 50.0, 45.0, quality=None)["qty"] == 100  # בלי ציון: הבסיס
+    assert swing.size(100_000, 50.0, 48.0, risk_usd=100, quality=3)["qty"] == 100
+
+
 def test_order_body():
     b = swing.order_body("ABC", 10, 50.0, 47.5, "swing-ABC-1")
     assert b["order_class"] == "oto" and b["time_in_force"] == "gtc"
