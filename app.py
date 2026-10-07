@@ -1529,7 +1529,9 @@ def api_replay():
         if (data is None or request.args.get("refresh") == "1") and not _replay["running"]:
             _replay.update(running=key, error=None)
             threading.Thread(target=_replay_run, args=(start, day, key), daemon=True).start()
-    return jsonify({"data": data, "running": _replay["running"] == key, "error": _replay["error"]})
+    busy = bool(_replay["running"]) and _replay["running"] != key
+    return jsonify({"data": data, "running": _replay["running"] == key, "busy": busy,
+                    "error": _replay["error"]})
 
 
 @app.get("/positions")

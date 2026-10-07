@@ -184,6 +184,7 @@ async function go(refresh){
     const r = await jget(`/api/replay?start=${encodeURIComponent(start)}${refresh ? "&refresh=1" : ""}`);
     $("err").innerHTML = r.error ? `<div class="err">${esc(r.error)}</div>` : "";
     if (r.running) { $("meta").textContent = "מחשב… (נרות של כ-1,500 מניות, כדקה-שתיים)"; timer = setTimeout(() => go(), 5000); }
+    else if (r.busy && !r.data) { $("meta").textContent = "חישוב של יום התחלה אחר עוד רץ. החישוב הזה יתחיל מיד אחריו…"; timer = setTimeout(() => go(), 5000); }
     const d = r.data;
     if (!d) { if (!r.running) $("cards").innerHTML = ""; return; }
     if (!r.running) $("meta").textContent = `מ-${d.start} עד ${d.day} · חושב ${new Date(d.computed_at).toLocaleString("he-IL")}`;
