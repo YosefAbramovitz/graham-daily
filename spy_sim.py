@@ -16,19 +16,21 @@ from typing import List, Optional, Tuple
 CASH = 10_000.0
 
 # קרנות הסל שמוצגות בהדמיה, באותו סכום ומאותו יום: (סימול, שם קצר, שם הקרן).
+# מלבד SPY - עשר הקרנות עם התשואה הגבוהה ביותר ב-5 השנים עד 2.10.2026 מבין
+# כ-60 שנבדקו. בחירה בדיעבד: זו רשימה להשוואה, לא תחזית.
 # SPY ראשונה ומזהה השורה שלה נשאר spy_sim, כי הסיכום היומי בטלגרם מסתמך עליה.
 FUNDS = [
     ("SPY", "S&P 500", "SPDR S&P 500"),
-    ("VT", "כל העולם", "Vanguard Total World Stock"),
-    ("PPA", "ביטחוניות", "Invesco Aerospace & Defense"),
-    ("QQQ", "נאסד\"ק 100", "Invesco QQQ"),
-    ("VTV", "מניות ערך", "Vanguard Value"),
     ("SMH", "שבבים", "VanEck Semiconductor"),
+    ("GDX", "מכרות זהב", "VanEck Gold Miners"),
+    ("XLK", "טכנולוגיה", "Technology Select Sector SPDR"),
+    ("COPX", "מכרות נחושת", "Global X Copper Miners"),
+    ("XLE", "אנרגיה", "Energy Select Sector SPDR"),
+    ("SLV", "כסף", "iShares Silver Trust"),
     ("GLD", "זהב", "SPDR Gold Shares"),
-    ("DYNF", "מנוהלת אקטיבית", "iShares U.S. Equity Factor Rotation Active"),
-    ("JAAA", "אג\"ח", "Janus Henderson AAA CLO"),
-    ("LIT", "מתכות וסוללות", "Global X Lithium & Battery Tech"),
-    ("ITB", "בנייה", "iShares U.S. Home Construction"),
+    ("AIQ", "בינה מלאכותית", "Global X Artificial Intelligence & Technology"),
+    ("PPA", "ביטחוניות", "Invesco Aerospace & Defense"),
+    ("CIBR", "סייבר", "First Trust NASDAQ Cybersecurity"),
 ]
 
 
