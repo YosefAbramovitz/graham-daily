@@ -1,5 +1,5 @@
 """
-הדמיה לאחור "מה היה אילו": שני חשבונות (סווינג וגראהם) מקבלים 10,000 ש"ח ביום ההתחלה,
+הדמיה לאחור "מה היה אילו": שני חשבונות (סווינג וגראהם) מקבלים 10,000$ ביום ההתחלה,
 ועוברים יום מסחר אחרי יום עד היום, לפי אותם כללים שהמסך עובד לפיהם (plans.py, swing.py).
 
 סווינג (swing.py):
@@ -18,9 +18,9 @@
   * יציאה ביעד +50% (פתיחה מעל היעד = בפתיחה, גבוה מעל היעד = ביעד), או שנה אחרי הקנייה
     (app.HOLD_DAYS) בפתיחה. בלי סטופ.
 
-שברי מניות מותרים בשני החשבונות: ב-10,000 ש"ח (כ-2,700$) מניות שלמות היו מעוותות את
-הגודל שהכלל קובע. הכסף מתורגם לדולרים בשער של יום ההתחלה, והשווי מוצג בשקלים בשער של
-כל יום (כלומר כולל השפעת הדולר).
+שברי מניות מותרים בשני החשבונות: ב-10,000$ מניות שלמות היו מעוותות את הגודל שהכלל
+קובע (פוזיציה של גראהם היא כ-670$). לצדם קרנות הסל ממסך ההשוואה (spy_sim.FUNDS), כל אחת
+10,000$ שנקנו בפתיחה של אותו יום ראשון (hold_replay).
 
 אזהרות: רשימת המניות לסווינג היא S&P 1500 של היום (הטיית שורדים), והנרות הם מותאמים
 לפיצולים ודיבידנדים. זו הדמיה, לא עסקאות שבוצעו, ולא המלצה.
@@ -37,7 +37,7 @@ from typing import Dict, List, Optional, Tuple
 
 import swing
 
-CASH_ILS = 10_000.0
+CASH = 10_000.0             # דולר לכל חשבון
 DEFAULT_START = "2026-09-25"
 COST = 0.0010                 # עמלה+מרווח לכל צד, כמו swing_sim.py
 MAX_GAP = 0.20                # כמו plans.MAX_GAP: פתיחה רחוקה מסגירת האות = תקלת נתונים
@@ -279,22 +279,29 @@ def graham_replay(O, H, C, lists: List[Tuple[datetime, List[dict]]], start: str,
 
 
 # ---------------------------------------------------------------------------
-# שקלים
+# קרנות סל להשוואה: קנייה אחת בפתיחה של היום הראשון והחזקה (spy_sim.FUNDS)
 # ---------------------------------------------------------------------------
 
-def fx_on(fx: Dict[str, float], day: str) -> Optional[float]:
-    """שער הדולר ביום day, או ביום האחרון שלפניו שיש בו שער."""
-    keys = [k for k in fx if k <= day]
-    if keys:
-        return fx[max(keys)]
-    return fx[min(fx)] if fx else None
-
-
-def in_ils(res: dict, fx: Dict[str, float], start_ils: float = CASH_ILS) -> dict:
-    """מוסיף שווי בשקלים לכל נקודה ולסיכום, לפי השער של כל יום."""
-    pts = [[d, round(v * fx_on(fx, d), 2)] for d, v in res["points"]]
-    res = dict(res, points_ils=pts, start_ils=start_ils)
-    if pts:
-        st = _stats(pts, start_ils)
-        res.update(equity_ils=st["equity"], ret_ils=st["ret"], maxdd_ils=st["maxdd"])
+def hold_replay(O, C, sym: str, start: str, cash: float, end: Optional[str] = None) -> dict:
+    """כל הסכום ב-sym בפתיחה של יום המסחר הראשון מ-start (כמו החשבונות), בלי עלות.
+    הנרות מותאמים לדיבידנדים, כך שהתשואה כוללת אותם."""
+    import pandas as pd
+    s0 = pd.Timestamp(start)
+    s1 = pd.Timestamp(end) if end else C.index[-1]
+    shares, entry, first, points = None, None, None, []
+    for d in C.index:
+        if not (s0 <= d <= s1):
+            continue
+        o, c = (_num(O.at[d, sym]) if sym in O.columns else None), _num(C.at[d, sym])
+        if shares is None:
+            px = o if o and o > 0 else c
+            if not px or px <= 0:
+                continue
+            shares, entry, first = cash / px, px, d.date().isoformat()
+        if c and c > 0:
+            points.append([d.date().isoformat(), round(shares * c, 2)])
+    res = _result(points, [], {}, 0.0 if shares else cash, cash,
+                  {"symbol": sym, "since": first, "shares": round(shares or 0.0, 6),
+                   "entry": round(entry, 4) if entry else None})
+    res["buys"] = 1 if shares else 0
     return res

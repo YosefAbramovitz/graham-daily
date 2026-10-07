@@ -96,12 +96,12 @@ def test_graham_equal_weight_cheapest_first_and_target():
     assert again and again[0]["day"] == "2026-10-02"
 
 
-def test_ils_conversion():
-    res = {"points": [["2026-09-25", 2_700.0], ["2026-09-28", 2_970.0]], "start_value": 2_700.0}
-    fx = {"2026-09-25": 3.7, "2026-09-26": 3.6}
-    out = rs.in_ils(res, fx, 9_990.0)
-    assert out["points_ils"] == [["2026-09-25", 9_990.0], ["2026-09-28", 10_692.0]]
-    assert abs(out["ret_ils"] - (10_692 / 9_990 - 1)) < 1e-9
+def test_hold_buys_first_open():
+    O, H, C = graham_frames()
+    r = rs.hold_replay(O, C, "X", "2026-09-26", 10_000.0)    # שבת: היום הראשון הוא 28.9
+    assert r["since"] == "2026-09-28" and r["entry"] == 10.0  # הפתיחה = הסגירה של 25.9
+    assert r["points"][0] == ["2026-09-28", 11_000.0]         # כבר ביום הראשון: פתיחה->סגירה
+    assert abs(r["ret"] - (16 / 10 - 1)) < 1e-6 and r["buys"] == 1
 
 
 if __name__ == "__main__":

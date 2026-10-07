@@ -1405,8 +1405,7 @@ def api_compare():
 
 REPLAY_CACHE = HERE / "replay_cache.json"
 REPLAY_LISTS = HERE / "replay_lists"         # tech_results.csv לפי commit, לא משתנה לעולם
-REPLAY_VERSION = 1
-FX_FALLBACK = 3.7
+REPLAY_VERSION = 2          # 2: דולרים, קרנות סל מהפתיחה של היום הראשון
 TECH_HISTORY = ("https://api.github.com/repos/YosefAbramovitz/graham-daily/commits"
                 "?path=tech_results.csv&per_page=100&since={since}")
 TECH_RAW = "https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/{sha}/tech_results.csv"
@@ -1446,30 +1445,6 @@ def _tech_lists(since: date) -> list:
     return out
 
 
-def _fx_ils(start: date, end: date) -> dict:
-    """יום -> שקלים לדולר. Yahoo קודם, frankfurter (הבנק האירופי) כגיבוי. {} אם שניהם נכשלו."""
-    p1 = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp()) - 10 * 86400
-    p2 = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp()) + 86400
-    try:
-        r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/ILS=X",
-                         params={"period1": p1, "period2": p2, "interval": "1d"},
-                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        res = r.json()["chart"]["result"][0]
-        out = {datetime.fromtimestamp(t, timezone.utc).date().isoformat(): float(v)
-               for t, v in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if v}
-        if out:
-            return out
-    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
-        pass
-    try:
-        a = (start - timedelta(days=10)).isoformat()
-        r = requests.get(f"https://api.frankfurter.app/{a}..{end.isoformat()}",
-                         params={"from": "USD", "to": "ILS"}, timeout=15)
-        return {d: float(v["ILS"]) for d, v in r.json()["rates"].items()}
-    except (requests.RequestException, ValueError, KeyError, TypeError):
-        return {}
-
-
 def _replay_frames(bars: dict, end: date):
     import pandas as pd
     fields = {k: {} for k in "ohlcv"}
@@ -1493,29 +1468,33 @@ def _replay_run(start: date, day: date, key: str) -> None:
         lists = _tech_lists(start)
         gsyms = sorted({r["ticker"] for _, rows in lists for r in rows})
         with using(avail[0]):
-            syms = sorted(set(_swing_universe()) | set(gsyms)) + ["SPY"]
+            fsyms = [f[0] for f in spy_sim.FUNDS]
+            syms = sorted((set(_swing_universe()) | set(gsyms) | set(fsyms)) - {"SPY"}) + ["SPY"]
             bars = _swing_bars(syms, start - timedelta(days=swing.HISTORY_DAYS), day)
         O, H, L, C, V = _replay_frames(bars, day)
-        fx = _fx_ils(start, day)
-        fx_ok = bool(fx)
-        fx = fx or {start.isoformat(): FX_FALLBACK}
-        usd = replay_sim.CASH_ILS / replay_sim.fx_on(fx, start.isoformat())
-        sw = replay_sim.swing_replay(O, H, L, C, V, start.isoformat(), usd, day.isoformat())
-        gr = replay_sim.graham_replay(O, H, C, lists, start.isoformat(), usd, day.isoformat())
-        spy = spy_sim.simulate([(d.date().isoformat(), float(v)) for d, v in C["SPY"].dropna().items()],
-                               start.isoformat(), usd)
-        spy = {"points": spy["points"], "start_value": usd, "trades": [], "positions": [],
-               "buys": 1, "sells": 0, "cash": 0.0, **{k: spy[k] for k in ("equity", "ret", "maxdd")}}
+        cash = replay_sim.CASH
+        accounts = {
+            "swing": replay_sim.swing_replay(O, H, L, C, V, start.isoformat(), cash, day.isoformat()),
+            "graham": replay_sim.graham_replay(O, H, C, lists, start.isoformat(), cash, day.isoformat()),
+        }
+        funds = []
+        for sym, name, fund in spy_sim.FUNDS:
+            if sym not in C.columns:
+                funds.append({"id": sym, "label": name, "fund": fund, "symbol": sym,
+                              "error": f"אין נרות ל-{sym}"})
+                continue
+            r = replay_sim.hold_replay(O, C, sym, start.isoformat(), cash, day.isoformat())
+            funds.append(dict(r, id=sym, label=name, fund=fund))
         out = {"start": start.isoformat(), "day": day.isoformat(), "version": REPLAY_VERSION,
-               "computed_at": now_iso(), "cash_ils": replay_sim.CASH_ILS, "usd": round(usd, 2),
-               "fx_start": replay_sim.fx_on(fx, start.isoformat()),
-               "fx_end": replay_sim.fx_on(fx, day.isoformat()), "fx_ok": fx_ok,
+               "computed_at": now_iso(), "cash": cash,
                "universe": len(syms) - 1, "priced": int(C.shape[1]),
                "lists": [ts.isoformat() for ts, _ in sorted(lists, key=lambda x: x[0])],
-               "accounts": {k: replay_sim.in_ils(v, fx) for k, v in
-                            (("swing", sw), ("graham", gr), ("spy", spy))}}
+               "accounts": accounts, "funds": funds}
         with _replay_lock:
-            replay_page_cache()[key] = out
+            cache = replay_page_cache()
+            for k in [k for k in cache if not k.endswith(f"|{REPLAY_VERSION}")]:
+                del cache[k]                 # תוצאות של גרסה קודמת לא יוצגו שוב
+            cache[key] = out
             try:
                 REPLAY_CACHE.write_text(json.dumps(replay_page_cache(), ensure_ascii=False),
                                         encoding="utf-8")
