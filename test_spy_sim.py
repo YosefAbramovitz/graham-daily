@@ -59,7 +59,7 @@ def test_app_builds_a_row_per_fund():
             assert [r["id"] for r in rows] == [spy_sim.row_id(f[0]) for f in spy_sim.FUNDS]
             assert abs(by["spy_sim"]["equity"] - 10_200) < 0.01
             assert abs(by["sim_ppa"]["ret"] - 0.05) < 1e-9
-            assert by["sim_qqq"].get("error")                 # בלי נרות: שגיאה, לא קריסה
+            assert by["sim_cibr"].get("error")                 # בלי נרות: שגיאה, לא קריסה
             assert by["spy_sim"]["label"] == "S&P 500 · SPY (הדמיה)"
             assert by["spy_sim"]["fund"] == "SPDR S&P 500"
             assert app.spy_sim_row(today="2026-09-28")["id"] == "spy_sim"
