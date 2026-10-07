@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מה היה אילו</title>
+<style>
+:root{
+  --bg:#faf8f4; --paper:#fff; --ink:#1c1a17; --muted:#6f6a60; --line:#e5e1d8;
+  --accent:#8a6a3b; --good-bg:#e4efe2; --good-ink:#2f6b34; --bad-bg:#f3e6e4; --bad-ink:#94413a;
+  --s1:#8a6a3b; --s2:#3b6a8a; --s3:#5f8a3b; --s4:#8a3b6a; --s5:#b0582a; --s6:#4a4a9a; --s7:#2f7f7a; --s8:#9a8a2a; --s9:#6a6a6a; --s10:#a33b3b; --s11:#3b8a5f; --s12:#7a5a2a; --s13:#2a6a9a; --shadow:0 1px 3px rgba(28,26,23,.07);
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --bg:#161513; --paper:#1f1e1b; --ink:#eae6dd; --muted:#9a9488; --line:#333029;
+  --accent:#c9a465; --good-bg:#1f3322; --good-ink:#8fcf93; --bad-bg:#3a2321; --bad-ink:#e29b93;
+  --s1:#c9a465; --s2:#6fa8d0; --s3:#9ccc6f; --s4:#d07fae; --s5:#e59a6b; --s6:#a3a3e6; --s7:#6cc7bf; --s8:#d8c65f; --s9:#b5b0a6; --s10:#e08585; --s11:#7fd0a3; --s12:#d1a46a; --s13:#79b8e6; --shadow:0 1px 3px rgba(0,0,0,.35);
+}}
+*{box-sizing:border-box}
+body{margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+.wrap{max-width:1100px; margin:0 auto; padding:22px 16px 60px}
+.top{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px}
+h1{font-size:23px; margin:0}
+a.back{font-size:13px; color:var(--muted); text-decoration:none; border-bottom:1px dotted var(--muted)}
+.grow{flex:1}
+.sm{font-size:12px; color:var(--muted)}
+.fund{margin:-4px 0 6px}
+.cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px}
+.card{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:14px 16px; box-shadow:var(--shadow)}
+.card h3{margin:0 0 6px; font-size:15px; display:flex; align-items:center; gap:8px}
+.sw{width:10px; height:10px; border-radius:3px; display:inline-block}
+.big{font-size:22px; font-weight:700; font-variant-numeric:tabular-nums}
+.row{display:flex; justify-content:space-between; font-size:13px; padding:2px 0}
+.up{color:var(--good-ink)} .down{color:var(--bad-ink)}
+.chart{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:12px; margin-top:14px}
+svg{width:100%; height:auto; display:block; direction:ltr}
+.btn{font:inherit; font-size:12px; font-weight:600; padding:5px 13px; border-radius:999px;
+  border:1px solid var(--line); background:transparent; color:var(--ink); cursor:pointer; margin-top:8px}
+.btn.primary{background:var(--accent); color:#fff; border-color:var(--accent)}
+.err{background:var(--bad-bg); color:var(--bad-ink); padding:8px 12px; border-radius:8px; margin:10px 0; font-size:13px}
+.ok{background:var(--good-bg); color:var(--good-ink)}
+bdi{direction:ltr; unicode-bidi:isolate}
+table{width:100%; border-collapse:collapse; font-size:13px; font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap}
+th{color:var(--muted); font-weight:600; font-size:12px}
+.tbl{background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:10px 12px; margin-top:14px; overflow-x:auto}
+.tbl h2{font-size:16px; margin:2px 0 8px}
+.ctl{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:6px 0 12px}
+input[type=date]{font:inherit; font-size:13px; padding:4px 8px; border:1px solid var(--line); border-radius:8px; background:var(--paper); color:var(--ink)}
+.ctl .btn{margin-top:0}
+.tag{font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--line)}
+.buy{background:var(--good-bg); color:var(--good-ink); border-color:transparent}
+.sell{background:var(--bad-bg); color:var(--bad-ink); border-color:transparent}
+.warn{background:#f6eedb; color:#7a5a1a; padding:8px 12px; border-radius:8px; margin:10px 0; font-size:13px}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]) .warn{background:#3a3020; color:#e2c48a} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><h1>מה היה אילו: סווינג וגראהם</h1><span class="grow"></span>
+    <a class="back" href="/compare">השוואת חשבונות</a> <a class="back" href="/">חזרה למסך המסחר</a></div>
+  <p class="sm">כל חשבון מקבל 10,000 ש"ח ביום ההתחלה. בכל יום מסחר עד היום ההדמיה קונה את מה שהכלל
+    היה מאותת באותו בוקר ומוכרת לפי כללי היציאה: סווינג לפי האותות מהסגירה של אתמול (סטופ 4 ATR או
+    20 ימים, גודל לפי ציון האיכות), גראהם לפי הרשימה שהשלב הטכני שמר באותו בוקר (15 מקומות במשקל שווה,
+    יעד +50% או שנה). שברי מניות מותרים, עמלה+מרווח 0.1% לכל צד. זו הדמיה, לא עסקאות אמיתיות ולא המלצה.
+    בטווח של שבועות התוצאה היא בעיקר רעש.</p>
+  <div class="ctl"><label class="sm" for="start">יום התחלה</label><input type="date" id="start">
+    <button class="btn primary" onclick="go()">הצג</button>
+    <button class="btn" onclick="go(true)">חשב מחדש</button>
+    <span class="sm" id="meta"></span></div>
+  <div id="err"></div>
+  <div class="cards" id="cards"><div class="card">טוען…</div></div>
+  <div class="chart"><div class="sm" style="margin-bottom:6px">תשואה מצטברת בשקלים (כולל שינוי שער הדולר)</div>
+    <div id="chart"></div></div>
+  <div id="pos"></div>
+  <div class="tbl"><h2>יומן עסקאות</h2><div id="log"></div></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = v => v == null ? "—" : `<bdi>${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%</bdi>`;
+const ils = v => v == null ? "—" : `<bdi>${Number(v).toLocaleString("en-US", {maximumFractionDigits: 0})} ₪</bdi>`;
+const usd = (v, d = 0) => v == null ? "—" : `<bdi>${Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d})}$</bdi>`;
+const COLORS = {swing: "var(--s2)", graham: "var(--s1)", spy: "var(--s9)"};
+const LABEL = {swing: "סווינג", graham: "גראהם", spy: "S&P 500 (להשוואה)"};
+async function jget(u){ const r = await fetch(u); const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || r.status); return j; }
+
+function chart(acc){
+  const keys = Object.keys(acc).filter(k => (acc[k].points_ils || []).length > 1);
+  if (!keys.length) { $("chart").innerHTML = `<p class="sm">עוד אין מספיק ימים לגרף.</p>`; return; }
+  const W = 1000, H = 300, PL = 14, PR = 52, PT = 14, PB = 34;
+  const series = keys.map(k => ({k, pts: acc[k].points_ils, b: acc[k].start_ils}));
+  const all = series.flatMap(s => s.pts.map(p => p[1] / s.b - 1));
+  const rawLo = Math.min(0, ...all), rawHi = Math.max(0, ...all);
+  const step = [0.0025, 0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2, 0.25, 0.5, 1]
+    .find(s => (rawHi - rawLo) / s <= 6) || 1;
+  const lo = Math.floor(rawLo / step - 1e-9) * step, hi = Math.ceil(rawHi / step + 1e-9) * step;
+  const span = (hi - lo) || step;
+  const days = [...new Set(series.flatMap(s => s.pts.map(p => p[0])))].sort();
+  const x = d => PL + (days.indexOf(d) / Math.max(1, days.length - 1)) * (W - PL - PR);
+  const y = v => H - PB - ((v - lo) / span) * (H - PT - PB);
+  const dec = step < 0.01 ? 1 : 0;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="תשואה מצטברת">`;
+  for (let k = 0, t = lo; t <= hi + step / 2; k++, t = lo + k * step) {
+    const zero = Math.abs(t) < step / 1000, yy = y(t).toFixed(1);
+    svg += `<line x1="${PL}" x2="${W - PR}" y1="${yy}" y2="${yy}" stroke="var(--line)" stroke-width="${zero ? 1.6 : 1}"${zero ? "" : ' stroke-dasharray="3 4"'}/>`;
+    svg += `<text x="${W - PR + 6}" y="${(+yy + 4).toFixed(1)}" font-size="12" fill="var(--muted)">${zero ? "0" : (t > 0 ? "+" : "") + (t * 100).toFixed(dec)}%</text>`;
+  }
+  const every = Math.ceil(days.length / 8);
+  days.forEach((d, i) => {
+    const last = i === days.length - 1;
+    if (i % every && !last) return;
+    if (!last && days.length - 1 - i < every / 2) return;
+    const xx = x(d).toFixed(1), [yr, mo, dd] = d.split("-");
+    svg += `<line x1="${xx}" x2="${xx}" y1="${PT}" y2="${H - PB}" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>`;
+    svg += `<text x="${xx}" y="${H - 12}" font-size="12" fill="var(--muted)" text-anchor="${i === 0 ? "start" : last ? "end" : "middle"}">${dd}/${mo}${i === 0 || last ? "/" + yr.slice(2) : ""}</text>`;
+  });
+  series.forEach(s => {
+    const d = s.pts.map((p, k) => `${k ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1] / s.b - 1).toFixed(1)}`).join("");
+    svg += `<path d="${d}" fill="none" stroke="${COLORS[s.k]}" stroke-width="${s.k === "spy" ? 1.8 : 2.5}"${s.k === "spy" ? ' stroke-dasharray="6 4"' : ""} stroke-linejoin="round"/>`;
+  });
+  $("chart").innerHTML = svg + "</svg>";
+}
+
+function card(k, a){
+  const extra = k === "spy" ? `<p class="sm">קנייה אחת ביום ההתחלה והחזקה, כולל דיבידנדים.</p>`
+    : `<div class="row"><span>מזומן</span><b>${usd(a.cash)}</b></div>
+       <div class="row"><span>פוזיציות פתוחות</span><b>${a.positions.length}</b></div>
+       <div class="row"><span>קניות / מכירות</span><b>${a.buys} / ${a.sells}</b></div>`;
+  return `<div class="card"><h3><span class="sw" style="background:${COLORS[k]}"></span>${LABEL[k]}</h3>
+    <div class="big">${ils(a.equity_ils)}</div>
+    <div class="row"><span>תשואה בשקלים</span><b class="${(a.ret_ils || 0) >= 0 ? "up" : "down"}">${pct(a.ret_ils)}</b></div>
+    <div class="row"><span>תשואה בדולרים</span><b class="${(a.ret || 0) >= 0 ? "up" : "down"}">${pct(a.ret)}</b></div>
+    <div class="row"><span>ירידה מקסימלית</span><b>${pct(a.maxdd_ils)}</b></div>
+    <div class="row"><span>שווי בדולרים</span><b>${usd(a.equity)}</b></div>${extra}</div>`;
+}
+
+function positions(k, a){
+  if (!a.positions.length) return "";
+  const swing = k === "swing";
+  return `<div class="tbl"><h2>${LABEL[k]}: פוזיציות פתוחות</h2><table><thead><tr>
+    <th>מניה</th><th>נקנתה</th><th>כניסה</th><th>אחרון</th><th>תשואה</th><th>שווי</th>
+    <th>${swing ? "סטופ" : "יעד"}</th><th>${swing ? "יציאה ביום ה-20" : "יציאה לכל המאוחר"}</th></tr></thead><tbody>` +
+    a.positions.map(p => `<tr><td><bdi>${esc(p.ticker)}</bdi></td><td>${esc(p.entry_day)}</td>
+      <td>${usd(p.entry, 2)}</td><td>${usd(p.last, 2)}</td>
+      <td class="${p.ret >= 0 ? "up" : "down"}">${pct(p.ret)}</td><td>${usd(p.value)}</td>
+      <td>${usd(swing ? p.stop : p.target, 2)}</td><td>${esc(p.exit_day)}</td></tr>`).join("") +
+    `</tbody></table></div>`;
+}
+
+function log(acc){
+  const rows = ["swing", "graham"].flatMap(k => (acc[k].trades || []).map(t => ({...t, k})));
+  rows.sort((a, b) => b.day.localeCompare(a.day) || a.k.localeCompare(b.k) || (a.side === "sell" ? -1 : 1));
+  if (!rows.length) return `<p class="sm">אף חשבון לא קנה עדיין.</p>`;
+  return `<table><thead><tr><th>יום</th><th>חשבון</th><th>פעולה</th><th>מניה</th><th>מחיר</th>
+    <th>סכום</th><th>סיבה</th><th>רווח</th></tr></thead><tbody>` +
+    rows.map(t => `<tr><td>${esc(t.day)}</td><td><span class="sw" style="background:${COLORS[t.k]}"></span> ${LABEL[t.k]}</td>
+      <td><span class="tag ${t.side}">${t.side === "buy" ? "קנייה" : "מכירה"}</span></td>
+      <td><bdi>${esc(t.ticker)}</bdi></td><td>${usd(t.price, 2)}</td><td>${usd(t.value)}</td>
+      <td class="sm">${esc(t.reason)}</td>
+      <td>${t.side === "sell" ? `<span class="${t.pnl >= 0 ? "up" : "down"}">${usd(t.pnl)} (${pct(t.ret)})</span>` : ""}</td></tr>`).join("") +
+    `</tbody></table>`;
+}
+
+let timer = null;
+async function go(refresh){
+  clearTimeout(timer);
+  const start = $("start").value;
+  try { localStorage.setItem("replay_start", start); } catch (e) {}
+  try {
+    const r = await jget(`/api/replay?start=${encodeURIComponent(start)}${refresh ? "&refresh=1" : ""}`);
+    $("err").innerHTML = r.error ? `<div class="err">${esc(r.error)}</div>` : "";
+    if (r.running) { $("meta").textContent = "מחשב… (נרות של כ-1,500 מניות, כדקה-שתיים)"; timer = setTimeout(() => go(), 5000); }
+    const d = r.data;
+    if (!d) { if (!r.running) $("cards").innerHTML = ""; return; }
+    if (!r.running) $("meta").textContent = `עד ${d.day} · חושב ${new Date(d.computed_at).toLocaleString("he-IL")}`;
+    const acc = d.accounts, warn = [];
+    if (!d.fx_ok) warn.push(`לא הצלחתי להביא את שער הדולר; ההמרה לפי ${d.fx_start} ₪ קבוע.`);
+    else warn.push(`10,000 ₪ = ${usd(d.usd)} לפי שער ${d.fx_start.toFixed(3)} ביום ההתחלה; השער האחרון ${d.fx_end.toFixed(3)}.`);
+    if (acc.graham.first_list && acc.graham.first_list > d.start)
+      warn.push(`לגראהם אין רשימה שמורה לפני ${esc(acc.graham.first_list)} (הרשימות ב-git מתחילות ב-${esc((d.lists[0] || "").slice(0, 10))}), ולכן עד אז הוא במזומן.`);
+    else if (!acc.graham.first_list)
+      warn.push("לגראהם לא נמצאה אף רשימה שמורה בתקופה הזאת.");
+    warn.push(`רשימת הסווינג היא S&P 1500 של היום (${d.priced} מניות עם נרות), כך שיש הטיית שורדים.`);
+    $("err").innerHTML += `<div class="warn">${warn.join("<br>")}</div>`;
+    $("cards").innerHTML = ["swing", "graham", "spy"].map(k => card(k, acc[k])).join("");
+    chart(acc);
+    $("pos").innerHTML = positions("swing", acc.swing) + positions("graham", acc.graham);
+    $("log").innerHTML = log(acc);
+  } catch (e) { $("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+let saved = null;
+try { saved = localStorage.getItem("replay_start"); } catch (e) {}
+$("start").value = new URLSearchParams(location.search).get("start") || saved || "2026-09-25";
+go();
+</script>
+</body>
+</html>

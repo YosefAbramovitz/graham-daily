@@ -413,7 +413,7 @@ async function loadStatus(){
       const A = await jget("/api/accounts");
       if (A.rows.length > 1) bits.unshift(`<select id="acctsel" onchange="switchAcct(this.value)">` +
         A.rows.map(r => `<option value="${esc(r.id)}" ${r.id === A.current ? "selected" : ""}>חשבון: ${esc(r.label)}</option>`).join("") +
-        `</select> <a class="btn" href="/compare">השוואת חשבונות</a>`);
+        `</select> <a class="btn" href="/compare">השוואת חשבונות</a> <a class="btn" href="/replay">מה היה אילו</a>`);
     } catch (e) { /* בלי בורר */ }
     if (s.equity) bits.push(`<span class="pill">שווי ${Number(s.equity).toFixed(2)}$</span>`);
     if (s.buying_power) bits.push(`<span class="pill">כוח קנייה ${Number(s.buying_power).toFixed(2)}$</span>`);

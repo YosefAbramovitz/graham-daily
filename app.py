@@ -92,6 +92,7 @@ from flask import (Flask, has_request_context, jsonify, make_response, redirect,
                    send_from_directory)
 
 import plans
+import replay_sim
 import spy_sim
 import swing
 from exit_orders import (entry_order_body, exit_order_body, exit_orders_for,
@@ -1395,6 +1396,161 @@ def api_compare():
     out = {"rows": rows, "at": now_iso()}
     _compare.update(at=time.time(), data=out)
     return jsonify(out)
+
+
+# ---------------------------------------------------------------------------
+# הדמיה לאחור: מה היה אילו סווינג וגראהם היו מתחילים ביום מסוים (replay_sim.py).
+# החישוב כבד (נרות של S&P 1500), ולכן רץ ברקע ונשמר ל-replay_cache.json ליום מסחר.
+# ---------------------------------------------------------------------------
+
+REPLAY_CACHE = HERE / "replay_cache.json"
+REPLAY_LISTS = HERE / "replay_lists"         # tech_results.csv לפי commit, לא משתנה לעולם
+REPLAY_VERSION = 1
+FX_FALLBACK = 3.7
+TECH_HISTORY = ("https://api.github.com/repos/YosefAbramovitz/graham-daily/commits"
+                "?path=tech_results.csv&per_page=100&since={since}")
+TECH_RAW = "https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/{sha}/tech_results.csv"
+_replay = {"running": None, "error": None, "data": None}
+_replay_lock = threading.Lock()
+
+
+def replay_page_cache() -> dict:
+    if _replay["data"] is None:
+        try:
+            _replay["data"] = json.loads(REPLAY_CACHE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _replay["data"] = {}
+    return _replay["data"]
+
+
+def _tech_lists(since: date) -> list:
+    """[(זמן ה-commit, שורות)] לכל גרסה של tech_results.csv מ-since, ועוד אחת לפניו."""
+    r = requests.get(TECH_HISTORY.format(since=f"{since - timedelta(days=10)}T00:00:00Z"),
+                     timeout=20, headers={"Accept": "application/vnd.github+json"})
+    r.raise_for_status()
+    out = []
+    REPLAY_LISTS.mkdir(exist_ok=True)
+    for c in r.json():
+        sha = c["sha"]
+        ts = datetime.fromisoformat(c["commit"]["committer"]["date"].replace("Z", "+00:00"))
+        path = REPLAY_LISTS / f"{sha}.csv"
+        if path.exists():
+            text = path.read_text(encoding="utf-8")
+        else:
+            raw = requests.get(TECH_RAW.format(sha=sha), timeout=20)
+            if not raw.ok:
+                continue
+            text = raw.content.decode("utf-8-sig")
+            path.write_text(text, encoding="utf-8")
+        out.append((ts, replay_sim.parse_list(text)))
+    return out
+
+
+def _fx_ils(start: date, end: date) -> dict:
+    """יום -> שקלים לדולר. Yahoo קודם, frankfurter (הבנק האירופי) כגיבוי. {} אם שניהם נכשלו."""
+    p1 = int(datetime(start.year, start.month, start.day, tzinfo=timezone.utc).timestamp()) - 10 * 86400
+    p2 = int(datetime(end.year, end.month, end.day, tzinfo=timezone.utc).timestamp()) + 86400
+    try:
+        r = requests.get("https://query1.finance.yahoo.com/v8/finance/chart/ILS=X",
+                         params={"period1": p1, "period2": p2, "interval": "1d"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        res = r.json()["chart"]["result"][0]
+        out = {datetime.fromtimestamp(t, timezone.utc).date().isoformat(): float(v)
+               for t, v in zip(res["timestamp"], res["indicators"]["quote"][0]["close"]) if v}
+        if out:
+            return out
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError):
+        pass
+    try:
+        a = (start - timedelta(days=10)).isoformat()
+        r = requests.get(f"https://api.frankfurter.app/{a}..{end.isoformat()}",
+                         params={"from": "USD", "to": "ILS"}, timeout=15)
+        return {d: float(v["ILS"]) for d, v in r.json()["rates"].items()}
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return {}
+
+
+def _replay_frames(bars: dict, end: date):
+    import pandas as pd
+    fields = {k: {} for k in "ohlcv"}
+    last = end.isoformat()
+    for sym, rows in bars.items():
+        rows = [b for b in rows if str(b.get("t", ""))[:10] <= last]
+        if not rows:
+            continue
+        idx = pd.to_datetime([str(b["t"])[:10] for b in rows])
+        for k in fields:
+            fields[k][sym] = pd.Series([float(b[k]) for b in rows], index=idx)
+    mk = lambda k: pd.DataFrame(fields[k]).sort_index().pipe(lambda d: d[~d.index.duplicated()])
+    return tuple(mk(k) for k in "ohlcv")
+
+
+def _replay_run(start: date, day: date, key: str) -> None:
+    try:
+        avail = accounts_available()
+        if not avail:
+            raise RuntimeError("חסרים מפתחות אלפקה ב-.env")
+        lists = _tech_lists(start)
+        gsyms = sorted({r["ticker"] for _, rows in lists for r in rows})
+        with using(avail[0]):
+            syms = sorted(set(_swing_universe()) | set(gsyms)) + ["SPY"]
+            bars = _swing_bars(syms, start - timedelta(days=swing.HISTORY_DAYS), day)
+        O, H, L, C, V = _replay_frames(bars, day)
+        fx = _fx_ils(start, day)
+        fx_ok = bool(fx)
+        fx = fx or {start.isoformat(): FX_FALLBACK}
+        usd = replay_sim.CASH_ILS / replay_sim.fx_on(fx, start.isoformat())
+        sw = replay_sim.swing_replay(O, H, L, C, V, start.isoformat(), usd, day.isoformat())
+        gr = replay_sim.graham_replay(O, H, C, lists, start.isoformat(), usd, day.isoformat())
+        spy = spy_sim.simulate([(d.date().isoformat(), float(v)) for d, v in C["SPY"].dropna().items()],
+                               start.isoformat(), usd)
+        spy = {"points": spy["points"], "start_value": usd, "trades": [], "positions": [],
+               "buys": 1, "sells": 0, "cash": 0.0, **{k: spy[k] for k in ("equity", "ret", "maxdd")}}
+        out = {"start": start.isoformat(), "day": day.isoformat(), "version": REPLAY_VERSION,
+               "computed_at": now_iso(), "cash_ils": replay_sim.CASH_ILS, "usd": round(usd, 2),
+               "fx_start": replay_sim.fx_on(fx, start.isoformat()),
+               "fx_end": replay_sim.fx_on(fx, day.isoformat()), "fx_ok": fx_ok,
+               "universe": len(syms) - 1, "priced": int(C.shape[1]),
+               "lists": [ts.isoformat() for ts, _ in sorted(lists, key=lambda x: x[0])],
+               "accounts": {k: replay_sim.in_ils(v, fx) for k, v in
+                            (("swing", sw), ("graham", gr), ("spy", spy))}}
+        with _replay_lock:
+            replay_page_cache()[key] = out
+            try:
+                REPLAY_CACHE.write_text(json.dumps(replay_page_cache(), ensure_ascii=False),
+                                        encoding="utf-8")
+            except OSError:
+                pass
+        _replay["error"] = None
+    except Exception as exc:  # noqa: BLE001 - ההדמיה לא מפילה את השרת
+        _replay["error"] = f"ההדמיה נכשלה: {exc}"
+    finally:
+        _replay["running"] = None
+
+
+@app.get("/replay")
+def replay_page():
+    return send_from_directory(HERE, "replay_ui.html")
+
+
+@app.get("/api/replay")
+def api_replay():
+    """ההדמיה מיום start (ברירת מחדל replay_sim.DEFAULT_START) עד יום המסחר האחרון שנסגר.
+    refresh=1 מחשב מחדש גם אם יש תוצאה שמורה."""
+    try:
+        start = date.fromisoformat(request.args.get("start") or replay_sim.DEFAULT_START)
+    except ValueError:
+        return jsonify({"error": "תאריך לא תקין"}), 400
+    day = last_closed_day()
+    if start > day or start < day - timedelta(days=3 * 365):
+        return jsonify({"error": "תאריך ההתחלה צריך להיות בשלוש השנים האחרונות"}), 400
+    key = f"{start}|{day}|{REPLAY_VERSION}"
+    with _replay_lock:
+        data = replay_page_cache().get(key)
+        if (data is None or request.args.get("refresh") == "1") and not _replay["running"]:
+            _replay.update(running=key, error=None)
+            threading.Thread(target=_replay_run, args=(start, day, key), daemon=True).start()
+    return jsonify({"data": data, "running": _replay["running"] == key, "error": _replay["error"]})
 
 
 @app.get("/positions")

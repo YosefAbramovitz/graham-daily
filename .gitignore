@@ -26,6 +26,8 @@ swing_sectors.json
 reminders.json
 swing_auto.json
 spy_sim.json
+replay_cache.json
+replay_lists/
 
 # טוקני הקישור לטלפון (הנוכחי, וגיבוב של הישנים)
 link_tokens.json
