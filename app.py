@@ -2106,6 +2106,17 @@ def remind_tick() -> None:
         telegram_send("מסך המסחר - היום:\n" + "\n".join(lines))
 
 
+def keep_awake() -> str:
+    """ב-Windows: המחשב לא נכנס לשינה כל עוד המסך רץ (המסך עצמו כן יכול לכבות).
+    ב-8.10.2026 המחשב נרדם ב-14:56 והתעורר ב-16:59, וההודעה של פתיחת המסחר (16:30) לא נשלחה בזמן."""
+    if sys.platform != "win32":
+        return "שינה: לא Windows, אין מה לחסום."
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    ok = ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    return "שינה: המחשב לא יירדם כל עוד המסך רץ." if ok else "שינה: לא הצלחתי לחסום שינה."
+
+
 def remind_loop() -> None:
     while True:
         for tick in (remind_tick, summary_tick, bars_tick):
@@ -2748,6 +2759,7 @@ def main() -> int:
             print("  (לא מצאתי כתובת רשת פנימית; בדוק עם ipconfig)")
     if REMOTE:
         print("  אל תשתף את הכתובת: הטוקן שבה מאפשר לשלוח פקודות.")
+    print(keep_awake())
     threading.Thread(target=remind_loop, daemon=True).start()
     if os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
         threading.Thread(target=tg_loop, daemon=True).start()
