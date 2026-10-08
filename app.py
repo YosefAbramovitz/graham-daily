@@ -2108,7 +2108,7 @@ def remind_tick() -> None:
 
 def remind_loop() -> None:
     while True:
-        for tick in (remind_tick, summary_tick):
+        for tick in (remind_tick, summary_tick, bars_tick):
             try:
                 tick()
             except Exception as exc:  # noqa: BLE001 - תזכורת שנכשלה לא מפילה את השרת
@@ -2486,6 +2486,42 @@ def summary_tick() -> None:
     state["summary"] = day.isoformat()
     _remind_save(state)
     telegram_send(day_summary(day.isoformat()))
+
+
+def bars_tick() -> None:
+    """פעם ביום מסחר, אחרי 17:00 בניו יורק: מוסיף את היום לקבצי ההיסטוריה (bars_update.py)."""
+    if _bars_job["running"] or not (HERE / "variants_cache" / "bars.pkl.gz").exists():
+        return
+    ok, clock = api("GET", f"{base()}/v2/clock")
+    if not ok or clock.get("is_open"):
+        return
+    try:
+        now = datetime.fromisoformat(str(clock.get("timestamp")).replace("Z", "+00:00"))
+    except ValueError:
+        return
+    day = now.date()
+    if not swing.is_trading_day(day) or now.hour < 17:
+        return
+    state = _remind_state()
+    if state.get("bars") == day.isoformat():
+        return
+    state["bars"] = day.isoformat()
+    _remind_save(state)
+
+    def job():
+        import bars_update
+        _bars_job["running"] = True
+        try:
+            for line in bars_update.update_all(HERE / "variants_cache"):
+                print(f"היסטוריה: {line}", flush=True)
+        except Exception as exc:  # noqa: BLE001 - עדכון שנכשל ינוסה שוב מחר
+            print(f"היסטוריה: העדכון נכשל ({type(exc).__name__}: {exc})", flush=True)
+        finally:
+            _bars_job["running"] = False
+    threading.Thread(target=job, daemon=True).start()
+
+
+_bars_job = {"running": False}
 
 
 TG_HELP = ("פקודות: /plan - כל התוכניות לאישור; /swing, /graham - תוכנית אחת; "
