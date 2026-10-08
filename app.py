@@ -546,6 +546,7 @@ def _parse_watch(text: str) -> list:
             "price": f("price"), "atr_pct": f("atr_pct"),
             "rsi": f("rsi"), "quality_score": f("quality_score"),
             "ebit_ev": f("ebit_ev"), "value_rank": f("value_rank"),
+            "momentum_12_1": f("momentum_12_1"),
             "value_top": (row.get("value_top") or "").strip() == "כן",
         })
     return [r for r in rows if r["ticker"]]
@@ -1405,7 +1406,7 @@ def api_compare():
 
 REPLAY_CACHE = HERE / "replay_cache.json"
 REPLAY_LISTS = HERE / "replay_lists"         # tech_results.csv לפי commit, לא משתנה לעולם
-REPLAY_VERSION = 2          # 2: דולרים, קרנות סל מהפתיחה של היום הראשון
+REPLAY_VERSION = 3          # 2: דולרים, קרנות סל מהפתיחה של היום הראשון; 3: מסנן מומנטום בגראהם
 TECH_HISTORY = ("https://api.github.com/repos/YosefAbramovitz/graham-daily/commits"
                 "?path=tech_results.csv&per_page=100&since={since}")
 TECH_RAW = "https://raw.githubusercontent.com/YosefAbramovitz/graham-daily/{sha}/tech_results.csv"

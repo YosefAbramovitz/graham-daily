@@ -17,13 +17,15 @@ def test_swing_plan():
 
 
 def test_graham_plan_equal_weight_cheapest_first():
-    rows = [{"ticker": "A", "value_rank": 3, "signal_kind": "כניסה"},
-            {"ticker": "B", "value_rank": 1, "signal_kind": "המתנה"},
-            {"ticker": "C", "value_rank": 2, "signal_kind": "פסילה"},
-            {"ticker": "D", "value_rank": None}]
-    prices = {"A": 20.0, "B": 50.0, "C": 10.0, "D": 10.0}
+    rows = [{"ticker": "A", "value_rank": 3, "signal_kind": "כניסה", "momentum_12_1": 0.2},
+            {"ticker": "B", "value_rank": 1, "signal_kind": "המתנה", "momentum_12_1": 0.05},
+            {"ticker": "C", "value_rank": 2, "signal_kind": "פסילה", "momentum_12_1": 0.3},
+            {"ticker": "D", "value_rank": None, "momentum_12_1": 0.1},
+            {"ticker": "E", "value_rank": 0, "signal_kind": "החזקה", "momentum_12_1": -0.1},
+            {"ticker": "F", "value_rank": 0, "signal_kind": "החזקה"}]
+    prices = {"A": 20.0, "B": 50.0, "C": 10.0, "D": 10.0, "E": 10.0, "F": 10.0}
     p = plans.plan_graham(rows, 15_000, 15_000, prices, [], 0)
-    assert [x["ticker"] for x in p] == ["B", "A", "D"]    # C נפסלה, D בלי דירוג בסוף
+    assert [x["ticker"] for x in p] == ["B", "A", "D"]    # C נפסלה, E/F בלי מומנטום חיובי, D בסוף
     assert p[0]["qty"] == 20 and p[0]["target"] == round(p[0]["price"] * 1.5, 2)
     one = plans.plan_graham(rows, 15_000, 15_000, prices, ["B"], 14)   # מקום אחד, B מוחזקת
     assert [x["ticker"] for x in one] == ["A"]

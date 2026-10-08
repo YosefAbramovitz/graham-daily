@@ -4,8 +4,10 @@
   * סווינג: אותות הסגירה של אתמול, לפי הדירוג, סיכון לפי ציון האיכות (swing.size:
     0/0.25/0.5/1% לציון 0/1/2/3; ציון 0 לא נקנה),
     עד 15 פוזיציות ועד המזומן. קנייה market עם סטופ צמוד ב-swing.STOP_ATR (4 ATR).
-  * גראהם: המניות מהמסך שלא נפסלו, הזולות קודם (value_rank, סדר בלבד), עד 15 פוזיציות
-    במשקל שווה (1/15 מהתיק), עם יעד מכירה +50%.
+  * גראהם: המניות מהמסך שלא נפסלו ושהמומנטום שלהן (12-1) חיובי, הזולות קודם (value_rank,
+    סדר בלבד), עד 15 פוזיציות במשקל שווה (1/15 מהתיק), עם יעד מכירה +50%.
+    מסנן המומנטום נגד "מלכודות ערך" (אוקטובר 2026, quality_sim.py): 2017-2026 +17.4% בשנה
+    מול +12.6% בלי המסנן ו-SPY +15.0%. הטיית שורדים: היקום הוא S&P 1500 של היום.
   * S&P 500: כבר לא חשבון באלפקה - הדמיה מקומית ב-spy_sim.py.
 """
 
@@ -53,15 +55,20 @@ def swing_order(p: dict, client_id: str) -> dict:
             "stop_loss": {"stop_price": f"{p['stop']:.2f}"}, "client_order_id": client_id}
 
 
+def graham_candidates(rows: List[dict]) -> List[dict]:
+    """לא נפסלו, מומנטום 12-1 חיובי (חסר = לא נקנית), הזולות קודם."""
+    cand = [r for r in rows if r.get("signal_kind") != "פסילה"
+            and r.get("momentum_12_1") is not None and r["momentum_12_1"] > 0]
+    return sorted(cand, key=lambda r: (r.get("value_rank") is None, r.get("value_rank") or 0))
+
+
 def plan_graham(rows: List[dict], equity: float, cash: float, prices: Dict[str, float],
                 busy: Iterable[str], held: int, slots: int = GRAHAM_SLOTS) -> List[dict]:
     busy = {s.upper() for s in busy}
     free = max(0, slots - held)
     per = equity / slots if slots else 0.0
-    cand = [r for r in rows if r.get("signal_kind") != "פסילה"]
-    cand.sort(key=lambda r: (r.get("value_rank") is None, r.get("value_rank") or 0))
     out, left = [], max(0.0, cash)
-    for r in cand:
+    for r in graham_candidates(rows):
         if len(out) >= free:
             break
         sym = r["ticker"].upper()

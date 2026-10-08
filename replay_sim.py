@@ -13,7 +13,8 @@
 
 גראהם (plans.plan_graham):
   * הרשימה היא tech_results.csv כפי שנשמר ב-git באותו בוקר (השלב הטכני רץ לפני פתיחת
-    המסחר). כל המניות שלא נפסלו, הזולות קודם (value_rank), עד 15 פוזיציות, כל אחת
+    המסחר). המניות שלא נפסלו ושהמומנטום 12-1 שלהן חיובי (plans.graham_candidates),
+    הזולות קודם (value_rank), עד 15 פוזיציות, כל אחת
     1/15 מההון, קנייה בפתיחה.
   * יציאה ביעד +50% (פתיחה מעל היעד = בפתיחה, גבוה מעל היעד = ביעד), או שנה אחרי הקנייה
     (app.HOLD_DAYS) בפתיחה. בלי סטופ.
@@ -35,6 +36,7 @@ import math
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
+import plans
 import swing
 
 CASH = 10_000.0             # דולר לכל חשבון
@@ -196,7 +198,8 @@ def parse_list(text: str) -> List[dict]:
         if t:
             rows.append({"ticker": t, "signal_kind": (r.get("signal_kind") or "").strip(),
                          "signal": (r.get("signal") or "").strip(),
-                         "value_rank": _num(r.get("value_rank"))})
+                         "value_rank": _num(r.get("value_rank")),
+                         "momentum_12_1": _num(r.get("momentum_12_1"))})
     return rows
 
 
@@ -241,8 +244,7 @@ def graham_replay(O, H, C, lists: List[Tuple[datetime, List[dict]]], start: str,
         rows = list_for(lists, d.date())
         if rows is not None and first_list is None:
             first_list = day
-        cand = [r for r in rows or [] if r["signal_kind"] != "פסילה"]
-        cand.sort(key=lambda r: (r["value_rank"] is None, r["value_rank"] or 0))
+        cand = plans.graham_candidates(rows or [])
         per = prev_eq / slots
         for r in cand:
             if len(pos) >= slots:

@@ -584,7 +584,8 @@ async function loadWatch(){
             target="_blank" rel="noopener noreferrer"
             title="פתח את ${esc(r.ticker)} ב-Alpaca">${esc(r.ticker)}</a></td>
         <td><div class="nm">${logo(r)}<div>${esc(r.name)}<span class="sm">${esc(r.sector)}</span></div></div></td>
-        <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span></td>
+        <td><span class="pill ${r.signal_kind==="כניסה"?"ok":blocked?"no":""}">${esc(r.signal)}</span>${!blocked && !(r.momentum_12_1 > 0)
+          ? ` <span class="pill no" title="מומנטום 12-1 לא חיובי: תוכנית גראהם לא קונה אותה (מסנן נגד מלכודות ערך)">לא בתוכנית</span>` : ""}</td>
         <td class="num" data-sort="${r.last ?? ""}"><div class="px" id="px-${esc(r.ticker)}">${pxCell(r)}</div></td>
         <td class="num">${r.atr_pct ? r.atr_pct.toFixed(1)+"%" : "—"}</td>
         <td class="num">${r.quality_score ?? "—"}</td>

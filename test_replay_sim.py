@@ -69,7 +69,8 @@ def graham_frames():
     return O, C.copy(), C
 
 
-LIST = "ticker,signal,signal_kind,value_rank\nY,כניסה,כניסה,2\nX,המתנה,המתנה,1\nZ,x,פסילה,0\n"
+LIST = ("ticker,signal,signal_kind,value_rank,momentum_12_1\nY,כניסה,כניסה,2,0.1\n"
+        "X,המתנה,המתנה,1,0.2\nZ,x,פסילה,0,0.3\nW,החזקה,החזקה,0,-0.1\n")
 
 
 def test_list_for_uses_morning_commit():
@@ -87,6 +88,7 @@ def test_graham_equal_weight_cheapest_first_and_target():
     r = rs.graham_replay(O, H, C, lists, "2026-09-24", 1_500.0, slots=15)
     buys = [t for t in r["trades"] if t["side"] == "buy"]
     assert [b["ticker"] for b in buys][:2] == ["X", "Y"]              # הזולה קודם, בלי פסילה
+    assert "W" not in {b["ticker"] for b in buys}                     # מומנטום שלילי
     assert buys[0]["day"] == "2026-09-25" and abs(buys[0]["value"] - 100.0) < 1e-6
     sells = [t for t in r["trades"] if t["side"] == "sell"]
     assert sells and sells[0]["ticker"] == "X" and sells[0]["reason"].startswith("יעד")
