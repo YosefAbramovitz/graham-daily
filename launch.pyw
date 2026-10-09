@@ -80,7 +80,8 @@ def is_up(port: int = PORT) -> bool:
         return False
 
 
-def start() -> None:
+def start(open_browser: bool = True) -> bool:
+    """מפעיל את השרת. מחזיר True אם עלה. open_browser=False: בלי דפדפן ובלי חלון הודעה (watchdog.pyw)."""
     public = public_mode()
     port = LOCAL_PORT if public else PORT
     stop()
@@ -101,14 +102,18 @@ def start() -> None:
 
     for _ in range(120):
         if is_up(port):
-            webbrowser.open(f"http://127.0.0.1:{port}/")
-            return
+            if open_browser:
+                webbrowser.open(f"http://127.0.0.1:{port}/")
+            return True
         time.sleep(0.5)
+    if not open_browser:
+        return False
     try:
         tail = LOG.read_text(encoding="utf-8", errors="replace")[-1500:]
     except OSError:
         tail = ""
     msg("המסך לא עלה תוך דקה.\n\n" + tail, error=True)
+    return False
 
 
 def main() -> None:
