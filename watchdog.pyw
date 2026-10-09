@@ -82,6 +82,7 @@ def check() -> None:
     except OSError:
         pass
     STAMP.write_text(str(time.time()))
+    log("המסך לא ענה. מפעיל מחדש...")
     ok = L.start(open_browser=False)
     log("המסך לא ענה. הופעל מחדש: " + ("עלה" if ok else "לא עלה תוך דקה (סוף הלוג הקודם ב-app.prev.log)"))
 
@@ -109,5 +110,6 @@ if __name__ == "__main__":
             uninstall()
         else:
             check()
-    except Exception as exc:  # noqa: BLE001 - pythonw בולע שגיאות; לפחות ליומן
-        log(f"שגיאה: {type(exc).__name__}: {exc}")
+    except BaseException as exc:  # noqa: BLE001 - pythonw בולע שגיאות; לפחות ליומן
+        import traceback
+        log(f"שגיאה: {type(exc).__name__}: {exc}\n{traceback.format_exc()}")
