@@ -92,6 +92,10 @@ def install() -> None:
     cmd = f'"{pyw}" "{Path(__file__).resolve()}"'
     r = subprocess.run(["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "5", "/TN", TASK,
                         "/TR", cmd], capture_output=True, text=True)
+    if r.returncode == 0:      # schtasks לא יודע: לרוץ גם על סוללה
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+                        f"$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries; "
+                        f"Set-ScheduledTask -TaskName '{TASK}' -Settings $s"], capture_output=True)
     text = ("נרשמה משימה שבודקת את המסך כל 5 דקות." if r.returncode == 0
             else f"הרישום נכשל: {r.stdout} {r.stderr}")
     log(text)
