@@ -3,7 +3,8 @@ import os
 
 import app
 
-_ORIG = {k: getattr(app, k) for k in ("tg_call", "plan_for", "execute_plan", "swing_close", "api")}
+_ORIG = {k: getattr(app, k) for k in ("tg_call", "plan_for", "execute_plan", "swing_close", "api",
+                                     "fund_sim_rows")}
 
 
 def _restore():
@@ -161,9 +162,20 @@ def test_day_summary():
                                {"symbol": "GL", "side": "sell", "type": "stop", "status": "filled",
                                 "filled_at": "2026-09-28T18:00:00Z", "filled_avg_price": "161.8"}]}]
         app.api = fake_api
+        app.fund_sim_rows = lambda **kw: [
+            {"symbol": "SPY", "label": "S&P 500 · SPY (הדמיה)", "equity": 10087.0, "day_change": -6.0,
+             "ret": 0.0087, "since": "2026-09-25"},
+            {"symbol": "SMH", "label": "x", "equity": 10500.0, "day_change": 50.0,
+             "ret": 0.05, "since": "2026-09-25"}]
         txt = app.day_summary("2026-09-28")
-        assert "+100" in txt and "+1.00%" in txt
-        assert "נקנו: GL 4@170.00" in txt and "סטופ הופעל: GL @161.80" in txt
+        plain = txt.replace(app.LRI, "").replace(app.PDI, "")
+        assert "+$100 (+1.00%)" in plain and "🟢" in plain
+        assert "נקנו: GL 4@170.00" in plain and "סטופ הופעל: GL @161.80" in plain
+        assert "28.09.2026" in plain and "מזומן $500" in plain
+        pre = plain.split("<pre>")[1].split("</pre>")[0].splitlines()
+        assert [r.split()[0] for r in pre[1:]] == ["SMH", "SPY"]      # ממוין לפי תשואה
+        assert "S&P" not in txt                                        # לא שובר את ה-HTML
+        assert "<b>" not in app._plain(txt)
     _run(body)
 
 

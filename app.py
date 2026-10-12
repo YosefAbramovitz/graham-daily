@@ -2189,16 +2189,27 @@ def send_ca_telegram(host: str) -> str:
         return f"טלגרם: שליחת ה-CA נכשלה ({type(exc).__name__})."
 
 
-def telegram_send(text: str) -> bool:
-    """הודעה לטלגרם. לא זורק שגיאות; False אם לא נשלחה."""
+def _plain(html_text: str) -> str:
+    """HTML של טלגרם לטקסט רגיל, לגיבוי אם השליחה ב-HTML נכשלה."""
+    import html
+    return html.unescape(re.sub(r"</?(b|pre)>", "", html_text))
+
+
+def telegram_send(text: str, html: bool = False) -> bool:
+    """הודעה לטלגרם. לא זורק שגיאות; False אם לא נשלחה. html=True: עם <b>/<pre>, ואם
+    טלגרם דוחה את ה-HTML נשלח שוב כטקסט רגיל."""
     load_env()
     bot = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat = telegram_chat(bot) if bot else None
     if not chat:
         return False
     try:
-        r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15,
-                          json={"chat_id": chat, "text": text, "disable_web_page_preview": True})
+        body = {"chat_id": chat, "text": text, "disable_web_page_preview": True}
+        if html:
+            body["parse_mode"] = "HTML"
+        r = requests.post(f"https://api.telegram.org/bot{bot}/sendMessage", timeout=15, json=body)
+        if html and not (r.ok and r.json().get("ok")):
+            return telegram_send(_plain(text))
         return bool(r.ok and r.json().get("ok"))
     except (requests.RequestException, ValueError):
         return False
@@ -2421,8 +2432,49 @@ def tg_handle_callback(cq: dict) -> None:
 # סיכום יומי אחרי הסגירה
 # ---------------------------------------------------------------------------
 
+LRI, PDI = "⁦", "⁩"     # בידוד משמאל לימין: מספרים בתוך שורה בעברית לא מתערבבים
+
+
+def _ltr(text: str) -> str:
+    return f"{LRI}{text}{PDI}"
+
+
+def _money(v: float, sign: bool = False) -> str:
+    """$1,234 / -$2 / +$36"""
+    pre = "-" if v < 0 else ("+" if sign else "")
+    return f"{pre}${abs(v):,.0f}"
+
+
+def _dot(v: Optional[float]) -> str:
+    return "⚪" if not v else ("🟢" if v > 0 else "🔴")
+
+
+def _nice_day(day: str) -> str:
+    try:
+        return date.fromisoformat(day).strftime("%d.%m.%Y")
+    except ValueError:
+        return day
+
+
+def _acct_start(hist) -> tuple:
+    """(תאריך, שווי) של היום הראשון שבו היה כסף בחשבון, מ-portfolio/history."""
+    if not isinstance(hist, dict):
+        return None, None
+    eq = hist.get("equity") or []
+    ts = (hist.get("timestamp") or [])[-len(eq):] if eq else []
+    for t, v in zip(ts, eq):
+        if v and v > 0:
+            return datetime.fromtimestamp(t, timezone.utc).date().isoformat(), float(v)
+    return None, None
+
+
 def day_summary(day: str) -> str:
-    lines = [f"סיכום יום המסחר {day}"]
+    """סיכום אחרי הסגירה, בפורמט HTML של טלגרם: חלק לכל חשבון ואז טבלת השוואה."""
+    from html import escape
+    labels = {x: l for x, l, _ in ACCOUNTS}
+    eng = {"swing": "Swing", "graham": "Graham", "main": "Main"}
+    lines = [f"📊 <b>סיכום יום מסחר · {_ltr(_nice_day(day))}</b>"]
+    table = []                       # (שם, תשואה מההתחלה, שינוי היום באחוזים)
     for acct in accounts_available():
         with using(acct):
             ok_a, a = api("GET", f"{base()}/v2/account")
@@ -2430,50 +2482,58 @@ def day_summary(day: str) -> str:
             ok_o, orders = api("GET", f"{base()}/v2/orders",
                                params={"status": "closed", "limit": 200, "nested": "true",
                                        "after": f"{day}T00:00:00Z"})
+            ok_h, hist = api("GET", f"{base()}/v2/account/portfolio/history",
+                             params={"period": "1A", "timeframe": "1D"})
+        label = escape(labels.get(acct, acct))
         if not ok_a:
-            lines.append(f"\n{dict((x, l) for x, l, _ in ACCOUNTS).get(acct, acct)}: לא הצלחתי לקרוא")
+            lines += ["", f"<b>{label}</b>: לא הצלחתי לקרוא את החשבון"]
             continue
         eq = _f(a.get("equity")) or 0.0
         last = _f(a.get("last_equity")) or eq
         chg = eq - last
         pct = (chg / last * 100) if last else 0.0
-        label = dict((x, l) for x, l, _ in ACCOUNTS).get(acct, acct)
-        lines.append(f"\n{label}: ${eq:,.0f} ({'+' if chg >= 0 else ''}{chg:,.0f}, "
-                     f"{'+' if pct >= 0 else ''}{pct:.2f}%) | {len(pos) if ok_p else '?'} פוזיציות"
-                     f" | מזומן ${_f(a.get('cash')) or 0:,.0f}")
+        _, start = _acct_start(hist if ok_h else None)
+        ret = (eq / start - 1) * 100 if start else None
+        npos = len(pos) if ok_p and isinstance(pos, list) else "?"
+        lines += ["", f"<b>{label}</b>  {_ltr(_money(eq))}",
+                  f"היום: {_dot(chg)} {_ltr(f'{_money(chg, True)} ({pct:+.2f}%)')}"]
+        if ret is not None:
+            lines.append(f"מההתחלה: {_dot(ret)} {_ltr(f'{ret:+.2f}%')}")
+            table.append((eng.get(acct, acct), ret, pct))
+        lines.append(f"{npos} פוזיציות · מזומן {_ltr(_money(_f(a.get('cash')) or 0))}")
         fills = [o for o in flatten_orders(orders if ok_o else [])
                  if o.get("status") == "filled" and str(o.get("filled_at") or "")[:10] == day]
-        buys = [f"{o['symbol']} {o.get('filled_qty')}@{_f(o.get('filled_avg_price')) or 0:.2f}"
-                for o in fills if o.get("side") == "buy"]
-        stops = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
-                 for o in fills if o.get("side") == "sell" and o.get("type") in ("stop", "stop_limit")]
-        targets = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
-                   for o in fills if o.get("side") == "sell" and o.get("type") == "limit"]
-        other = [f"{o['symbol']} @{_f(o.get('filled_avg_price')) or 0:.2f}"
-                 for o in fills if o.get("side") == "sell" and o.get("type") == "market"]
-        if buys:
-            lines.append("  נקנו: " + ", ".join(buys))
-        if stops:
-            lines.append("  סטופ הופעל: " + ", ".join(stops))
-        if targets:
-            lines.append("  יעד הושג: " + ", ".join(targets))
-        if other:
-            lines.append("  נמכרו: " + ", ".join(other))
+
+        def fmt(o, qty=False):
+            px = _f(o.get("filled_avg_price")) or 0
+            return _ltr(f"{o['symbol']} {o.get('filled_qty')}@{px:.2f}" if qty else f"{o['symbol']} @{px:.2f}")
+        groups = [
+            ("🛒 נקנו", [fmt(o, True) for o in fills if o.get("side") == "buy"]),
+            ("🛑 סטופ הופעל", [fmt(o) for o in fills if o.get("side") == "sell"
+                              and o.get("type") in ("stop", "stop_limit")]),
+            ("🎯 יעד הושג", [fmt(o) for o in fills if o.get("side") == "sell" and o.get("type") == "limit"]),
+            ("💵 נמכרו", [fmt(o) for o in fills if o.get("side") == "sell" and o.get("type") == "market"]),
+        ]
+        lines += [f"{name}: " + " · ".join(items) for name, items in groups if items]
     try:
-        sims = fund_sim_rows(today=day)
+        sims = [r for r in fund_sim_rows(today=day) if not r.get("error")]
     except Exception:
         sims = []
-    first = True
     for sim in sims:
-        if sim.get("error"):
-            continue
         eq, chg = sim["equity"], sim["day_change"]
-        pct = chg / (eq - chg) * 100 if eq - chg else 0.0
-        lines.append(f"{chr(10) if first else ''}{sim['label']}: ${eq:,.0f} "
-                     f"({'+' if chg >= 0 else ''}{chg:,.0f}, "
-                     f"{'+' if pct >= 0 else ''}{pct:.2f}%) | תשואה מ-{sim['since']}: "
-                     f"{sim['ret'] * 100:+.2f}%")
-        first = False
+        table.append((sim.get("symbol") or sim["label"], sim["ret"] * 100,
+                      chg / (eq - chg) * 100 if eq - chg else 0.0))
+    if table:
+        since = sims[0]["since"] if sims else None
+        head = "🏁 <b>השוואה" + (f" מ-{_ltr(_nice_day(since))}" if since else "") + "</b>"
+        if sims:
+            head += "\nקרנות סל בהדמיה, 10,000$ בכל אחת"
+        rows = [f"{'':<7}{'total':>8}{'today':>9}"]
+        for name, ret, pct in sorted(table, key=lambda r: -r[1]):
+            mark = "*" if name in eng.values() else " "
+            rows.append(f"{escape(name)[:6] + mark:<7}{ret:>+7.2f}%{pct:>+8.2f}%")
+        lines += ["", head, "<pre>" + "\n".join(rows) + "</pre>",
+                  "* החשבונות האמיתיים, מהיום הראשון שהיה בהם כסף. כלי סינון, לא ייעוץ השקעות."]
     return "\n".join(lines)
 
 
@@ -2496,7 +2556,7 @@ def summary_tick() -> None:
         return
     state["summary"] = day.isoformat()
     _remind_save(state)
-    telegram_send(day_summary(day.isoformat()))
+    telegram_send(day_summary(day.isoformat()), html=True)
 
 
 def bars_tick() -> None:
@@ -2553,7 +2613,9 @@ def tg_handle_message(msg: dict) -> None:
     if cmd == "/summary":
         ok, clock = api("GET", f"{base()}/v2/clock")
         day = str(clock.get("timestamp", ""))[:10] if ok else date.today().isoformat()
-        tg_call("sendMessage", chat_id=chat, text=day_summary(day))
+        text = day_summary(day)
+        if not tg_call("sendMessage", chat_id=chat, text=text, parse_mode="HTML"):
+            tg_call("sendMessage", chat_id=chat, text=_plain(text))
         return
     kinds = {"/plan": list(PLAN_KINDS), "/swing": ["swing"], "/graham": ["graham"]}.get(cmd)
     if kinds is None:
