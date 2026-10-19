@@ -2041,19 +2041,41 @@ def api_plan_buy(kind: str):
 # (הודעה בלבד - שום פקודה לא נשלחת מכאן)
 # ---------------------------------------------------------------------------
 
-REMIND_FILE = HERE / "reminders.json"
+# מצב התזכורות (איזה יום כבר קיבל הודעת פתיחה / סיכום / עדכון היסטוריה). לא בתיקיית
+# הריפו: היא ב-Google Drive, והסנכרון החליף או נעל את הקובץ, הקריאה החזירה ריק ונשלחה שוב
+# הודעת פתיחה באמצע היום (19.10). עכשיו בתיקייה מקומית, ועותק בזיכרון: קריאה שנכשלה לא
+# "שוכחת" מה כבר נשלח.
+_LOCAL_DIR = Path(os.environ["LOCALAPPDATA"]) / "graham-daily" if os.environ.get("LOCALAPPDATA") else HERE
+REMIND_FILE = _LOCAL_DIR / "reminders.json"
+_OLD_REMIND_FILE = HERE / "reminders.json"
+_remind_mem: dict = {}
 
 
 def _remind_state() -> dict:
-    try:
-        d = json.loads(REMIND_FILE.read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    out = dict(_remind_mem)
+    for p in (REMIND_FILE, _OLD_REMIND_FILE):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(d, dict):
+            for k, v in d.items():          # תאריכים ISO: המאוחר מנצח
+                if isinstance(v, str) and str(out.get(k) or "") < v:
+                    out[k] = v
+        if p == REMIND_FILE and REMIND_FILE.exists():
+            break
+    return out
 
 
 def _remind_save(d: dict) -> None:
-    REMIND_FILE.write_text(json.dumps(d), encoding="utf-8")
+    _remind_mem.update(d)
+    try:
+        REMIND_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = REMIND_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_remind_mem), encoding="utf-8")
+        os.replace(tmp, REMIND_FILE)
+    except OSError as exc:
+        print(f"תזכורות: שמירת המצב נכשלה ({type(exc).__name__}); נשמר בזיכרון", flush=True)
 
 
 def remind_tick() -> None:

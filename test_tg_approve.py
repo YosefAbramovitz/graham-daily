@@ -189,3 +189,24 @@ def test_offer_returns_reasons_when_nothing_to_buy():
         sent, parts = app.tg_offer(list(app.PLAN_KINDS), quiet=True)
         assert sent is True and "swing" in parts
     _run(body)
+
+
+def test_remind_state_survives_unreadable_file():
+    import tempfile
+    from pathlib import Path
+    orig = (app.REMIND_FILE, app._OLD_REMIND_FILE, dict(app._remind_mem))
+    with tempfile.TemporaryDirectory() as d:
+        app.REMIND_FILE, app._OLD_REMIND_FILE = Path(d) / "x" / "r.json", Path(d) / "old.json"
+        app._remind_mem.clear()
+        try:
+            app._OLD_REMIND_FILE.write_text('{"day": "2026-10-16", "summary": "2026-10-16"}')
+            assert app._remind_state()["day"] == "2026-10-16"          # מעבר מהקובץ הישן
+            app._remind_save({"day": "2026-10-19"})
+            app.REMIND_FILE.write_text("{גרוע")                         # סנכרון שבר את הקובץ
+            st = app._remind_state()
+            assert st["day"] == "2026-10-19" and st["summary"] == "2026-10-16"
+            app.REMIND_FILE.unlink()                                     # או מחק אותו
+            assert app._remind_state()["day"] == "2026-10-19"
+        finally:
+            app.REMIND_FILE, app._OLD_REMIND_FILE = orig[0], orig[1]
+            app._remind_mem.clear(); app._remind_mem.update(orig[2])
